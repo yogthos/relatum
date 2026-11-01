@@ -38,27 +38,3 @@
   (is (not (integrity/same-key? {:a :b} {:a 1} {:b 2})))
   (is (integrity/same-key? clause {:cust-id 1} {:id 1}))
   (is (not (integrity/same-key? clause {:cust-id 1} {:id 2}))))
-
-(deftest dependents-are-exactly-the-children-that-point-at-the-parent
-  (let [children [{:cust-id 1 :n :a} {:cust-id 2 :n :b} {:cust-id nil :n :c} {:cust-id 1 :n :d}]]
-    (is (= [{:cust-id 1 :n :a} {:cust-id 1 :n :d}]
-           (integrity/dependents clause {:id 1} children)))
-    (is (= [] (integrity/dependents clause {:id 3} children)))))
-
-(deftest a-cascade-delete-carries-exactly-the-dependents
-  (let [children [{:cust-id 1} {:cust-id 2}]]
-    (is (= {:ok true :value [{:cust-id 1}]}
-           (integrity/delete-verdict clause {:id 1} children {:cascade :delete})))))
-
-(deftest a-parent-with-dependents-and-no-cascade-is-refused
-  (let [children [{:cust-id 1}]
-        v (integrity/delete-verdict clause {:id 1} children nil)]
-    (is (= false (:ok v)))
-    (is (= :foreign-key-violation (:error v)))
-    (is (= [{:cust-id 1}] (:rows v)))))
-
-(deftest a-parent-without-dependents-can-go
-  (is (= {:ok true :value []}
-         (integrity/delete-verdict clause {:id 9} [{:cust-id 1}] nil)))
-  (is (= {:ok true :value []}
-         (integrity/delete-verdict clause {:id 1} [] {:cascade :delete}))))

@@ -11,9 +11,9 @@
   engine's :fk op (relic rejects a row whose reference resolves to nothing).
 
   Verdicts follow relatum.plan: {:ok true :value ...} or
-  {:ok false :error <keyword> ...}. The effects - raising, applying a cascade
-  delete, mutating a database - stay in relatum.engine.dataflow and
-  relatum.core, which is what lets writ check this namespace.")
+  {:ok false :error <keyword> ...}. The effects - raising, writing a row -
+  stay in relatum.engine.dataflow and relatum.core, which is what lets writ
+  check this namespace.")
 
 ;; ---------------------------------------------------------------------------
 ;; keys
@@ -70,35 +70,3 @@
     (if (seq bad)
       {:ok false :error :foreign-key-violation :row (first bad) :rows bad :clause clause}
       {:ok true :value (vec rows)})))
-
-;; ---------------------------------------------------------------------------
-;; cascades
-
-(defn dependents
-  "The children that hold a reference to parent-row."
-  [clause parent-row children]
-  (reduce (fn [acc child-row]
-            (if (same-key? clause child-row parent-row)
-              (conj acc child-row)
-              acc))
-          []
-          children))
-
-(defn delete-verdict
-  "What removing parent-row means for its children.
-
-  With {:cascade :delete} the verdict carries exactly the children that point
-  at it, which is what the delete should also remove. Without it, a parent
-  that still has dependents is refused: rows the delete cannot touch must not
-  be silently orphaned.
-
-  The engine's :fk operator reaches the same answer when the delete runs, so
-  this is the rule stated rather than a second gate; it is here to be checked
-  against a cascade and to answer what a delete would take with it."
-  [clause parent-row children {:keys [cascade]}]
-  (let [held (dependents clause parent-row children)]
-    (cond
-      (empty? held) {:ok true :value []}
-      (= :delete cascade) {:ok true :value held}
-      :else {:ok false :error :foreign-key-violation
-             :row parent-row :rows held :clause clause})))

@@ -1,10 +1,10 @@
 (ns relatum.integrity-spec
   "Laws for foreign-key decisions, stated on rows rather than on databases.
 
-  A clause is {child-column parent-column}. The properties here are the ones a
-  cascade or a violation check depends on: a row has a parent exactly when some
-  parent agrees with it, a cascade removes exactly the rows that agree, and a
-  delete that cannot cascade is refused instead of orphaning anything."
+  A clause is {child-column parent-column}. The properties here are the ones an
+  insert depends on: a row has a parent exactly when some parent agrees with it
+  on every column of the clause, and a batch of rows is accepted exactly when
+  none of them is left dangling."
   (:require [writ.spec :refer [spec ann law graph]]
             [relatum.integrity]))
 
@@ -20,8 +20,6 @@
 (ann fk-verdict [Any Any Any -> (Map Keyword Any)])
 (ann check [Any Any Any -> (Vec Any)])
 (ann check-verdict [Any Any Any -> (Map Keyword Any)])
-(ann dependents [Any Any Any -> (Vec Any)])
-(ann delete-verdict [Any Any Any Any -> (Map Keyword Any)])
 
 (graph referencing
   {:start [:clause {:c :id}]
@@ -34,9 +32,7 @@
                     [has-parent? Any Any] #{:flag}
                     [fk-verdict Any Any] #{:verdict}
                     [check Any Any] #{:rows}
-                    [check-verdict Any Any] #{:verdict}
-                    [dependents Any Any] #{:rows}
-                    [delete-verdict Any Any Any] #{:verdict}}}})
+                    [check-verdict Any Any] #{:verdict}}}})
 
 ;; --- matching -------------------------------------------------------------
 
@@ -93,20 +89,3 @@
   (forall [a Int b Int]
     (= (:ok (check-verdict {:c :id} [{:c a} {:c b}] [{:id a}]))
        (empty? (check {:c :id} [{:c a} {:c b}] [{:id a}])))))
-
-;; --- cascades -------------------------------------------------------------
-
-(law dependents-are-exactly-the-children-that-agree-with-the-parent
-  (forall [a Int b Int]
-    (= (dependents {:c :id} {:id a} [{:c b}])
-       (if (= a b) [{:c b}] []))))
-
-(law a-cascading-delete-takes-exactly-the-dependents
-  (forall [a Int b Int]
-    (= (delete-verdict {:c :id} {:id a} [{:c b}] {:cascade :delete})
-       (if (= a b) {:ok true :value [{:c b}]} {:ok true :value []}))))
-
-(law a-cascading-delete-of-a-parent-with-dependents-fails
-  (forall [a Int b Int]
-    (= (:ok (delete-verdict {:c :id} {:id a} [{:c b}] nil))
-       (not= a b))))
