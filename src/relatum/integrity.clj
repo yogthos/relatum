@@ -90,7 +90,11 @@
   With {:cascade :delete} the verdict carries exactly the children that point
   at it, which is what the delete should also remove. Without it, a parent
   that still has dependents is refused: rows the delete cannot touch must not
-  be silently orphaned."
+  be silently orphaned.
+
+  The engine's :fk operator reaches the same answer when the delete runs, so
+  this is the rule stated rather than a second gate; it is here to be checked
+  against a cascade and to answer what a delete would take with it."
   [clause parent-row children {:keys [cascade]}]
   (let [held (dependents clause parent-row children)]
     (cond
