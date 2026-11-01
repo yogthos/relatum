@@ -6,6 +6,8 @@
   on the way in. A record built with create-table is a convenient way to carry
   a validated row, but it is not the storage representation."
   (:require [relatum.engine :as rel]
+            [relatum.integrity :as integrity]
+            [relatum.plan :as plan]
             [relatum.schema :as s]))
 
 (defn create-db
@@ -28,10 +30,46 @@
                        :known (vec (keys (s/tables)))})))
     (s/coerce-row t row)))
 
+(defn- fk-clauses
+  "The {child-column parent-column} clause of every reference the table
+  declares, with the table each one points at."
+  [t catalog]
+  (into []
+        (keep (fn [c]
+                (when (:references c)
+                  (let [resolved (plan/resolve-reference t c catalog)]
+                    (when (plan/ok? resolved)
+                      (let [[parent parent-column] (:value resolved)]
+                        {:table (:name parent)
+                         :clause {(:name c) parent-column}}))))))
+        (:columns t)))
+
+(defn- check-references
+  "Throw when row names a parent that is not there.
+
+  The engine raises on the same thing when the constraint runs; doing it here
+  reports it in this layer's error shape and before anything is written, so a
+  rejected insert leaves the database untouched."
+  [db table-name row]
+  (let [catalog (s/tables)]
+    (doseq [{:keys [table clause]} (fk-clauses (s/table table-name) catalog)
+            :let [parents (vec (rel/q db [[:from table]]))
+                  verdict (integrity/check-verdict clause [row] parents)]
+            :when (not (:ok verdict))]
+      (throw (ex-info (str "Foreign key violation: " table-name " references " table)
+                      {:relatum/error :foreign-key-violation
+                       :table table-name
+                       :references table
+                       :clause clause
+                       :row (:row verdict)
+                       :rows (:rows verdict)})))))
+
 (defn insert
   "Insert a row, validated and coerced against its table schema first."
   [db table-name row]
-  (rel/transact db [:insert table-name (coerce table-name row)]))
+  (let [row (coerce table-name row)]
+    (check-references db table-name row)
+    (rel/transact db [:insert table-name row])))
 
 (defn insert-many [db table-name rows]
   (reduce (fn [d r] (insert d table-name r)) db rows))

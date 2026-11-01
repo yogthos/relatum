@@ -2,12 +2,15 @@
   "Runs every writ spec under spec/ and exits non-zero unless all of them
   report :ok."
   (:require [relatum.expr-spec]
+            [relatum.integrity-spec]
             [relatum.plan-spec]
             [relatum.query-spec]
             [relatum.type-spec]
             [writ.spec :as spec]))
 
-(def ^:private specs ['relatum.type-spec 'relatum.plan-spec 'relatum.expr-spec 'relatum.query-spec])
+(def ^:private specs
+  ['relatum.type-spec 'relatum.plan-spec 'relatum.expr-spec
+   'relatum.query-spec 'relatum.integrity-spec])
 
 (defn- summarize [laws]
   (let [proved (filter #(= :proved (:status %)) laws)

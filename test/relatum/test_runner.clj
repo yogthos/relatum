@@ -2,6 +2,8 @@
   (:require [clojure.test :as t]
             [relatum.engine-test]
             [relatum.expr-test]
+            [relatum.core-test]
+            [relatum.integrity-test]
             [relatum.query-test]
             [relatum.schema-test]
             [relatum.table-test]
@@ -9,8 +11,8 @@
             [relatum.prop-test]))
 
 (def ^:private fast-namespaces
-  ['relatum.expr-test 'relatum.query-test 'relatum.engine-test 'relatum.schema-test
-   'relatum.table-test 'relatum.relationship-test])
+  ['relatum.expr-test 'relatum.query-test 'relatum.integrity-test 'relatum.core-test 'relatum.engine-test
+   'relatum.schema-test 'relatum.table-test 'relatum.relationship-test])
 
 (def ^:private all-namespaces
   (conj fast-namespaces 'relatum.prop-test))

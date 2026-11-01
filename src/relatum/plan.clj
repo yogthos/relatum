@@ -279,8 +279,12 @@
 ;; ---------------------------------------------------------------------------
 ;; engine constraints
 
-(defn- resolve-reference
-  "Work out which column of the referenced table a foreign key points at."
+(defn resolve-reference
+  "Work out which column of the referenced table a foreign key points at.
+
+  Public because the edge that inserts rows has to build the same
+  {child-column parent-column} clause the constraint does; a second copy of the
+  pk-default rule would be a second place to get it wrong."
   [table c catalog]
   (let [parent-name (:references c)
         parent (get catalog parent-name)]

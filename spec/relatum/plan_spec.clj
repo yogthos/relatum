@@ -34,6 +34,8 @@
 (ann constraints [Any Any -> Any])
 (ann describe [Any -> (Opt Any)])
 (ann render [Any -> (Opt String)])
+;; public so the inserting edge can build the same clause the constraint does
+(ann resolve-reference [Any Any Any -> (Map Keyword Any)])
 
 ;; --- a verdict is always a verdict ----------------------------------------
 ;; Every entry point answers with the same shape, so a caller can branch on
@@ -224,7 +226,8 @@
             :table (Opt Table)
             :ddl (Opt String)}
    :final [:ddl]
-   :edges {:declaration {[build-table] #{:verdict}}
+   :edges {:declaration {[build-table] #{:verdict}
+                         [resolve-reference Any Any] #{:verdict}}
            :verdict {[planned-table] #{:table}}
            :table {[render] #{:ddl}}}})
 
