@@ -32,13 +32,16 @@
 
 (defn- fk-clauses
   "The {child-column parent-column} clause of every reference the table
-  declares, with the table each one points at."
+  declares, with the table each one points at. A reference that cannot be
+  resolved is thrown here: swallowing it would let the insert through with no
+  foreign-key check at all."
   [t catalog]
   (into []
         (keep (fn [c]
                 (when (:references c)
                   (let [resolved (plan/resolve-reference t c catalog)]
-                    (when (plan/ok? resolved)
+                    (if-not (plan/ok? resolved)
+                      (throw (s/rejected resolved))
                       (let [[parent parent-column] (:value resolved)]
                         {:table (:name parent)
                          :clause {(:name c) parent-column}}))))))

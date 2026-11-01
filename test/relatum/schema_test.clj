@@ -118,6 +118,36 @@
     (is (= :unknown-column (:relatum/error d)))
     (is (= :nope (:column d)))))
 
+(deftest an-attribute-that-needs-a-value-rejects-a-truncated-tail
+  (is (= :missing-attribute-value
+         (:relatum/error (err #(s/build-table* :bad-tail [[:pid :int :references]])))))
+  (is (= :missing-attribute-value
+         (:relatum/error (err #(s/build-table* :bad-tail2 [[:x :text :default]])))))
+  (is (= :missing-attribute-value
+         (:relatum/error (err #(s/build-table* :bad-tail3 [[:x :text :check]])))))
+  (testing "an explicit nil value is rejected too: a nil default would mean no
+            default at all, and a nil :references/:on/:on-delete/:check is
+            never meaningful"
+    (is (= :missing-attribute-value
+           (:relatum/error (err #(s/build-table* :bad-tail4 [[:x :text :default nil]])))))
+    (is (= :missing-attribute-value
+           (:relatum/error (err #(s/build-table* :bad-tail5 [[:x :int :references nil]])))))))
+
+(deftest on-attribute-must-name-a-column-of-the-referenced-table
+  (s/create-table* :fkparent [[:id :int :primary :key]])
+  (try
+    (s/create-table* :on-bad [[:pid :int :references :fkparent :on :bogus]])
+    (is (= :unknown-on-column
+           (:relatum/error (err #(s/ddl->constraints (s/table :on-bad))))))
+    (finally (s/forget :on-bad)))
+  (try
+    (s/create-table* :on-good [[:pid :int :references :fkparent :on :id]])
+    (is (contains? (set (s/ddl->constraints (s/table :on-good)))
+                   [:fk :fkparent {:pid :id} nil]))
+    (finally
+      (s/forget :on-good)
+      (s/forget :fkparent))))
+
 (deftest ddl->constraints-test
   (s/create-table* :fruit4
     [[:name "varchar(8)" :primary :key]

@@ -50,7 +50,10 @@
   "Fold a column's attribute tail into an options map, as a verdict.
 
   The value-taking attributes (:default :check :references :on-delete :on)
-  consume the next form; the flags leave it to be read as the next attribute."
+  consume the next form; the flags leave it to be read as the next attribute.
+  A value-taking attribute whose value is absent or nil is rejected - the
+  missing-value case would silently drop the attribute's meaning, and an
+  explicit nil default would mean no default at all."
   [table column attrs]
   (loop [pending (seq attrs) acc {}]
     (cond
@@ -68,6 +71,13 @@
       (recur (rest pending) (assoc acc :unique? true))
       (= :auto (first pending))
       (recur (rest pending) (assoc acc :auto? true))
+      (and (#{:default :check :references :on-delete :on} (first pending))
+           (nil? (second pending)))
+      (fail :missing-attribute-value
+            (str "Attribute " (name (first pending)) " of " column
+                 " needs a value")
+            {:table table :column column :attribute (first pending)
+             :allowed (known-attributes)})
       (#{:default :check} (first pending))
       (recur (nthrest pending 2) (assoc acc (first pending) (second pending)))
       (= :references (first pending))
@@ -296,7 +306,17 @@
             {:table (:name table) :column (:name c)
              :references parent-name :known (vec (sort (keys catalog)))})
 
-      (:on c) (succeed [parent (:on c)])
+      (:on c)
+      (let [on-col (column parent (:on c))]
+        (if on-col
+          (succeed [parent (:on c)])
+          (fail :unknown-on-column
+                (str "Column " (:name c) " of " (:name table)
+                     " references " parent-name ", but " (:on c)
+                     " is not one of its columns")
+                {:table (:name table) :column (:name c)
+                 :references parent-name :on (:on c)
+                 :referenced-columns (column-names parent)})))
 
       (= 1 (count (:pk parent))) (succeed [parent (first (:pk parent))])
 

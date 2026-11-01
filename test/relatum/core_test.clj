@@ -38,6 +38,18 @@
     (is (= [{:id 1 :name "ada"}] (core/rows db :icustomer)))
     (is (empty? (core/rows db :iorder)))))
 
+(deftest an-insert-into-a-table-whose-reference-cannot-resolve-is-rejected
+  (let [db (core/create-db)]
+    (s/create-table* :ibroken [[:id :int :primary :key]
+                               [:pid :int :references :nosuchtable]])
+    (try
+      (core/insert db :ibroken {:id 1 :pid 1})
+      (is false "expected the insert to be rejected")
+      (catch Throwable t
+        (is (= :unknown-references (:relatum/error (ex-data-in t)))))
+      (finally
+        (s/forget :ibroken)))))
+
 (deftest a-row-whose-reference-is-empty-is-rejected-too
   (let [db (core/create-db)]
     (try
