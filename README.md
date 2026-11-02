@@ -74,8 +74,8 @@ first-seen order, and everything comes back decoded:
 (require '[relatum.graph :as g])
 
 (s/create-table :follows
-  [[:src "varchar(64)"]
-   [:dst "varchar(64)"]])
+  [[:src :text]
+   [:dst :text]])
 
 (def db (-> (rc/create-db)
             (rc/insert :follows {:src "alice" :dst "bob"})
@@ -84,7 +84,7 @@ first-seen order, and everything comes back decoded:
 
 (def follow-graph (g/graph-of db :follows))
 
-(g/neighbors follow-graph "alice")   ;; => (("bob" 1.0))
+(g/neighbors follow-graph "alice")   ;; => (["bob" 1.0])
 (g/degree follow-graph "alice")      ;; => 1
 (g/in-degree follow-graph "carol")   ;; => 1
 ```

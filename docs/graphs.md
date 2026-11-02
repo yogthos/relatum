@@ -1,6 +1,6 @@
 # Graphs
 
-relatum.graph is a graph engine onto the relatum database. It rins BFS, DFS, Dijkstra, PageRank, connected components, shortest path over a CSR (compressed sparse row) layout in flat long arrays, so a build is O(V+E) and every traversal is a tight loop over primitives.
+relatum.graph is a graph engine onto the relatum database. It runs BFS, DFS, Dijkstra, PageRank, connected components, shortest path over a CSR (compressed sparse row) layout in flat long arrays, so a build is O(V+E) and every traversal is a tight loop over primitives.
 
 ## Building a graph
 
@@ -26,6 +26,12 @@ any other node value is dictionary-encoded — interned to a dense id in
 first-seen order and decoded on the way out. This is why keywords, uuids,
 and strings work as nodes without any per-node hashing during traversal.
 
+Construction validates each edge and throws ex-info (`:relatum/error`
+`:missing-endpoint`, `:negative-node`, or `:bad-weight`) rather than
+building broken topology: both endpoints must be present, integer endpoints
+are ids and so must be nonnegative, and weights must be finite and
+nonnegative (Dijkstra does not terminate on negative cycles).
+
 ```clojure
 (let [gr (g/graph [{:src :a :dst :b} {:src :b :dst :c}])]
   (g/nodes gr)) ;; => [:a :b :c]
@@ -43,7 +49,7 @@ queries about that snapshot forever. Rebuild after a transact.
 (g/nodes gr)           ;; every node value, in interned order
 (g/degree gr :a)       ;; out-degree
 (g/in-degree gr :a)    ;; in-degree
-(g/neighbors gr :a)    ;; ((target weight) ...) along out-edges
+(g/neighbors gr :a)    ;; ([target weight] ...) along out-edges
 ```
 
 ## Traversing

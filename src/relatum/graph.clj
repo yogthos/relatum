@@ -17,6 +17,30 @@
                   node->id ids])
 
 ;; ── Build helpers ─────────────────────────────────────────────────────
+(defn- check-edge
+  "An edge must name both endpoints, integer endpoints are node ids and ids
+   are nonnegative, and a weight must be a finite nonnegative number —
+   Dijkstra does not terminate on negative cycles."
+  [e ^long i]
+  (let [throw! (fn [msg data]
+                 (throw (ex-info (str "edge " i ": " msg)
+                                 (assoc data :relatum/error (:relatum/error data)
+                                        :edge-index i :edge e))))]
+    (when (or (nil? (:src e)) (nil? (:dst e)))
+      (throw! "needs non-nil :src and :dst" {:relatum/error :missing-endpoint}))
+    (when (and (integer? (:src e)) (neg? (:src e)))
+      (throw! "integer node values are ids and must be nonnegative"
+              {:relatum/error :negative-node :which :src}))
+    (when (and (integer? (:dst e)) (neg? (:dst e)))
+      (throw! "integer node values are ids and must be nonnegative"
+              {:relatum/error :negative-node :which :dst}))
+    (when-some [w (:weight e)]
+      (when (or (not (number? w))
+                (let [d (double w)]
+                  (or (Double/isInfinite d) (Double/isNaN d) (neg? d))))
+        (throw! ":weight must be a finite nonnegative number"
+                {:relatum/error :bad-weight :weight w})))))
+
 (defn- build-csr-w
   "Build a CSR keyed by `key-arr` (one entry per edge). `tgt-arr` holds the
    adjacency target per edge, and `wt-arr` (optional) the matching weights.
@@ -55,6 +79,7 @@
   [edges]
   (let [edges (vec edges)
         n-edges (count edges)
+        _ (dotimes [i n-edges] (check-edge (nth edges i) i))
         integer-node? integer?
         numeric? (every? (fn [e] (and (integer-node? (:src e))
                                       (integer-node? (:dst e))))
@@ -115,10 +140,13 @@
 
 (defn- node-id
   "Resolve a node value (or an integer id) to its internal id, or nil when
-   the node is not in the graph."
+   the node is not in the graph. On interned graphs a lookup by value wins;
+   an integer that is not a value falls back to its internal id."
   [^Graph g n]
   (if-some [m (.node->id g)]
-    (get m n)
+    (or (get m n)
+        (when (and (integer? n) (<= 0 n) (< n (.n-nodes g)))
+          (long n)))
     (when (and (integer? n) (<= 0 n) (< n (.n-nodes g)))
       (long n))))
 
@@ -381,31 +409,35 @@
 
 ;; ── connected components ───────────────────────────────────────────────
 (defn connected-components
-  "flatiron's label propagation over fwd and rev adjacency: the undirected
-   components of the graph. Returns rows of {:node n :component rep} where
-   rep is the smallest node id in the component, decoded to its value."
+  "The undirected components of the graph, via BFS flood fill over forward
+   and reverse adjacency: O(V+E), one traversal per component. Returns rows
+   of {:node n :component rep} where rep is the smallest node id in the
+   component, decoded to its value."
   [^Graph g]
   (let [nn (.n-nodes g)
         ^longs fo (.fwd-offsets g) ^longs ft (.fwd-targets g)
         ^longs ro (.rev-offsets g) ^longs rt (.rev-targets g)
         label (long-array nn)]
-    (dotimes [i nn] (aset label i i))
-    (loop [changed true]
-      (when changed
-        (let [ch (volatile! false)]
-          (dotimes [v nn]
-            (let [ml (volatile! (aget label v))]
-              (loop [j (aget fo v)]
-                (when (< j (aget fo (unchecked-inc v)))
-                  (vswap! ml min (aget label (aget ft j)))
-                  (recur (unchecked-inc j))))
-              (loop [j (aget ro v)]
-                (when (< j (aget ro (unchecked-inc v)))
-                  (vswap! ml min (aget label (aget rt j)))
-                  (recur (unchecked-inc j))))
-              (when (< @ml (aget label v))
-                (aset label v (long @ml)) (vreset! ch true))))
-          (recur @ch))))
+    (java.util.Arrays/fill label -1)
+    (dotimes [s nn]
+      (when (== -1 (aget label s))
+        (let [q (java.util.ArrayDeque.)]
+          (.add q (Long/valueOf s))
+          (aset label s s)
+          (loop []
+            (when-not (.isEmpty q)
+              (let [u (long (.poll q))]
+                (let [flood (fn [^longs off ^longs tgt]
+                              (loop [j (aget off u)]
+                                (when (< j (aget off (unchecked-inc u)))
+                                  (let [v (aget tgt j)]
+                                    (when (== -1 (aget label v))
+                                      (aset label v s)
+                                      (.add q (Long/valueOf v))))
+                                  (recur (unchecked-inc j)))))]
+                  (flood fo ft)
+                  (flood ro rt))
+                (recur)))))))
     (for [i (range nn)]
       {:node (decode-id g i) :component (decode-id g (aget label i))})))
 

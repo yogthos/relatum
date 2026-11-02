@@ -441,8 +441,8 @@
 (require '[relatum.graph :as g])
 
 (s/create-table :rmfollows
-  [[:src "varchar(64)"]
-   [:dst "varchar(64)"]])
+  [[:src :text]
+   [:dst :text]])
 
 (def rmfollow-db
   (-> (rc/create-db)
