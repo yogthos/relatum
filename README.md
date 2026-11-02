@@ -22,6 +22,10 @@ over-long name, a missing required column) is rejected before the engine sees
 it, with ex-data saying which column and why. `s/create-table*` does the same
 at runtime for schemas loaded from data.
 
+Full API documentation, with verified examples, lives in [docs/](docs/) —
+tables, types, queries, writing data, constraints, and the architecture. Every
+example there is checked by `jolt docs/verify.clj`.
+
 ## Running things
 
 - `jolt -M:test` — the fast suite. `jolt -M:test --all` adds the 10k-trial
