@@ -23,8 +23,7 @@
   (if (nil? m2)
     m1
     (reduce (fn [m k] (let [v (m2 k ::not-found)]
-                        (if #?(:clj  (identical? ::not-found v)
-                               :cljs (keyword-identical? ::not-found v))
+                         (if (identical? ::not-found v)
                           m
                           (assoc m k v)))) m1 ks)))
 
@@ -316,7 +315,7 @@
                    (forward db (eduction exf inserted) (eduction exf deleted))))}))
 
 (defn- new-sentinel []
-  #?(:clj (Object.) :cljs (js/Object.)))
+  (Object.))
 
 (defn- index-seek-from-exprs [exprs]
   (let [sentinel (new-sentinel)
@@ -1259,7 +1258,7 @@
 
                   (= :and (e/operator expr))
                   (let [[_ & exprs] expr]
-                    (reduce optimise alts exprs))
+                    (reduce #(merge-with-alts %1 (optimise %1 %2)) alts exprs))
 
                   (and (= contains? (e/operator expr))
                        (init? alts)
@@ -1848,7 +1847,7 @@
       (init graph relvar))))
 
 (extend-protocol w/GraphUnsafe
-  #?(:clj Object :cljs object)
+  Object
   (set-graph [m graph]
     (when-not (map? m)
       (u/raise "Only maps are usable as relatum databases"))

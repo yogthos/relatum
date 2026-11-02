@@ -16,8 +16,7 @@
             [relatum.engine.expr :as e]
             [relatum.engine.util :as u]
             [relatum.engine.relvar :as r]
-            [relatum.engine.db :as w])
-  #?(:cljs (:refer-clojure :exclude [exists?])))
+            [relatum.engine.db :as w]))
 
 (defn transact
   "Return a new relatum database, with the transaction applied. Will throw if any constraints are violated at the end of the
@@ -322,7 +321,7 @@
 ;; --
 ;; sum
 
-(def ^:private sum-add-fn #?(:clj +' :cljs +))
+(def ^:private sum-add-fn +')
 
 (defn sum
   "A relic agg function that returns the sum of the expressions across each row.

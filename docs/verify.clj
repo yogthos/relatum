@@ -362,6 +362,55 @@
                      [[:from :beyond]]))
        0)
 
+;; ---- README.md ----------------------------------------------------------
+
+(s/create-table* :rmperson
+  [[:id :int :primary :key]
+   [:name "varchar(64)" :required]
+   [:balance :real :default 0.0]])
+
+(def rmdb
+  (-> (rc/create-db)
+      (rc/insert :rmperson {:id 1 :name "Ada" :balance 100.0})
+      (rc/insert :rmperson {:id 2 :name "Grace" :balance 500.0})
+      (rc/insert :rmperson {:id 3 :name "Linus"})))
+
+(check "readme: insert applies defaults"
+       (set (rc/rows rmdb :rmperson))
+       '#{{:id 1, :name "Ada", :balance 100.0}
+          {:id 2, :name "Grace", :balance 500.0}
+          {:id 3, :name "Linus", :balance 0.0}})
+
+(check "readme: where equality"
+       (rc/q rmdb [[:from :rmperson] [:where [= :name "Ada"]]])
+       '({:id 1, :name "Ada", :balance 100.0}))
+
+(check "readme: where then select"
+       (set (rc/q rmdb [[:from :rmperson]
+                        [:where [> :balance 50]]
+                        [:select :name]]))
+       '#{{:name "Ada"} {:name "Grace"}})
+
+(check "readme: a range is spelled :and"
+       (set (rc/q rmdb [[:from :rmperson]
+                        [:where [:and [>= :balance 100] [<= :balance 500]]]]))
+       '#{{:id 1, :name "Ada", :balance 100.0}
+          {:id 2, :name "Grace", :balance 500.0}})
+
+(check "readme: whole-table count"
+       (rc/q rmdb [[:from :rmperson] [:agg [] [:n count]]])
+       '({:n 3}))
+
+(check "readme: update through a fn of the old row"
+       (rc/q (rc/update rmdb :rmperson [= :id 3]
+                        (fn [row] (assoc row :balance 25.0)))
+             [[:from :rmperson] [:where [= :id 3]]])
+       '({:id 3, :name "Linus", :balance 25.0}))
+
+(check "readme: delete clears the table"
+       (rc/rows (rc/delete rmdb :rmperson) :rmperson)
+       [])
+
 ;; ---- exit ---------------------------------------------------------------
 
 (if (pos? @failures)

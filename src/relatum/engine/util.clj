@@ -77,14 +77,13 @@
 (defn iterable-mut-list [mlist] (when mlist (persistent! @mlist)))
 
 (defn best-effort-fn-name [expr]
-  (let [expr-str (str #?(:clj expr :cljs (.-name expr)))
+  (let [expr-str (str expr)
         split-expr (str/split expr-str #"\$")
         ns (str/join "." (butlast split-expr))
         f (last split-expr)
-        show-ns (if (= #?(:clj "clojure.core" :cljs "cljs.core") ns) false true)
+        show-ns (if (= "clojure.core" ns) false true)
         [f] (str/split (str f) #"\@")]
-    #?(:clj  (clojure.lang.Compiler/demunge (if show-ns (str ns "/" f) f))
-       :cljs (if (empty? f) "fn" (demunge (if show-ns (str ns "/" f) f))))))
+    (clojure.lang.Compiler/demunge (if show-ns (str ns "/" f) f))))
 
 (defn vector-if-any-non-nil
   ([a] (when (some? a) [a]))

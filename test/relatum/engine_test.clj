@@ -574,7 +574,7 @@
 (defn- error-type [f]
   (try
     (do (f) nil)
-    (catch #?(:clj Throwable :cljs js/Error) e (::rel/error (ex-data e)))))
+    (catch Throwable e (::rel/error (ex-data e)))))
 
 (deftest unique-violation-test
   (let [db (rel/transact {} {:A [{:a 42}]})
@@ -587,8 +587,8 @@
     (is (= [{:a 1}] (rel/what-if db :A {:A [{:a 1}]} {:B [{:a 1}]})))
     (is (= [{:a 1}] (rel/what-if db :A {:B [{:a 1}]} {:A [{:a 1}]})))
     (is (= :foreign-key-violation (error-type #(rel/what-if db :A {:A [{:a 1}]}))))
-    (is (thrown? #?(:clj Throwable :cljs js/Error) #"Foreign key violation" (rel/what-if db :A {:A [{:a 1}]})))
-    (is (thrown? #?(:clj Throwable :cljs js/Error) #"Foreign key violation" (rel/what-if db :A {:A [{:a 1}]} {:B [{:a 2}]})))))
+    (is (thrown? Throwable #"Foreign key violation" (rel/what-if db :A {:A [{:a 1}]})))
+    (is (thrown? Throwable #"Foreign key violation" (rel/what-if db :A {:A [{:a 1}]} {:B [{:a 2}]})))))
 
 (deftest cascading-delete-test
   (let [db (rel/mat {} [[:from :A] [:fk [[:from :B]] {:a :a} {:cascade :delete}]])]
@@ -596,7 +596,7 @@
 
 (deftest cascading-delete-really-requires-:delete-test
   (let [db (rel/mat {} [[:from :A] [:fk [[:from :B]] {:a :a} {:cascade true}]])]
-    (is (thrown-with-msg? #?(:clj Throwable :cljs js/Error) #"Foreign key violation" (rel/what-if db :A {:A [{:a 1}]} {:B [{:a 1}]} [:delete :B])))))
+    (is (thrown-with-msg? Throwable #"Foreign key violation" (rel/what-if db :A {:A [{:a 1}]} {:B [{:a 1}]} [:delete :B])))))
 
 (deftest false-req-col-is-allowed-test
   (let [A [[:from :A {:req [:a]}]]
@@ -699,7 +699,7 @@
         D [[:from A] [:check [= :a 1]]]
         db (rel/mat {} C D)]
 
-    (is (thrown? #?(:clj Throwable :cljs js/Error)
+    (is (thrown? Throwable
                  (rel/transact db {:A [{:a 2}]
                                    :B [{:a 2}]})))
 
@@ -717,7 +717,7 @@
   (let [index [[:from :A]
                [:hash :a [inc :a]]]
         db (rel/mat {} index)]
-    (is (thrown? #?(:clj Throwable :cljs js/Error) (rel/q {} [[:lookup index "a" "b"]])))
+    (is (thrown? Throwable (rel/q {} [[:lookup index "a" "b"]])))
     (is (= [{:a 1}] (rel/what-if db [[:lookup index 1 2]] {:A [{:a 1} {:a 2}]})))
     (is (= [{:a 1} {:a 1, :b 2}] (rel/what-if db [[:lookup index 1 2]] {:A [{:a 1} {:a 2} {:a 1, :b 2}]})))))
 
@@ -725,7 +725,7 @@
   (let [index [[:from :A]
                [:btree :a [inc :a]]]
         db (rel/mat {} index)]
-    (is (thrown? #?(:clj Throwable :cljs js/Error) (rel/q {} [[:lookup index "a" "b"]])))
+    (is (thrown? Throwable (rel/q {} [[:lookup index "a" "b"]])))
     (is (= [{:a 1}] (rel/what-if db [[:lookup index 1 2]] {:A [{:a 1} {:a 2}]})))
     (is (= [{:a 1} {:a 1, :b 2}] (rel/what-if db [[:lookup index 1 2]] {:A [{:a 1} {:a 2} {:a 1, :b 2}]})))))
 
@@ -781,7 +781,7 @@
                 [:d count]
                 [:d2 [count true]]
                 [:e [rel/sum [inc :b]]]]]]
-    (is (thrown? #?(:clj Throwable :cljs js/Error) (rel/q db badq)))
+    (is (thrown? Throwable (rel/q db badq)))
     (is (= [{:b 2, :c 3, :d 2, :d2 2, :e 6}] (rel/q db goodq)))))
 
 (deftest min-max-test
@@ -805,10 +805,10 @@
   (is (= [{:avg 2}] (rel/q {} [[:const [{:a 1} {:a 3}]]
                                [:agg [] [:avg [rel/avg :a]]]])))
 
-  (is (= [{:avg #?(:clj 3/2 :cljs 1.5)}] (rel/q {} [[:const [{:a 0} {:a 3}]]
+  (is (= [{:avg 3/2}] (rel/q {} [[:const [{:a 0} {:a 3}]]
                                                     [:agg [] [:avg [rel/avg :a]]]])))
 
-  (is (= [{:avg #?(:clj 3/2 :cljs 1.5)}] (rel/q {} [[:const [{:b 0} {:a 3}]]
+  (is (= [{:avg 3/2}] (rel/q {} [[:const [{:b 0} {:a 3}]]
                                                     [:agg [] [:avg [rel/avg :a]]]])))
 
   (is (= [{:avg 1.5M}] (rel/q {} [[:const [{:b 0} {:a 3.0M}]]
@@ -1061,8 +1061,8 @@
                (try
                  (rel/what-if {} relvar [:insert :Person person])
                  nil
-                 (catch #?(:clj Throwable :cljs js/Error) e
-                   #?(:clj (.getMessage e) :cljs (.-message e)))))]
+                 (catch Throwable e
+                   (.getMessage e))))]
 
     (is (nil?
           (cerr
@@ -1475,6 +1475,20 @@
     (is (= [idx] (dataflow/find-indexes g :A)))
     (is (nil? (dataflow/get-node g default-idx)))
     (is (some? (dataflow/get-node g2 default-idx)))))
+
+(deftest an-and-through-a-materialized-index-keeps-every-conjunct
+  ;; planning [:and e1 e2] used to reduce over conjuncts with a merge that
+  ;; dropped all but the last expr's ops, so through a materialized unique
+  ;; index the query answered with rows matching e2 alone
+  (let [db (-> {} (rel/mat [[:from :p] [:unique :id]])
+               (rel/transact [:insert :p {:id 1 :balance 100.0}]
+                             [:insert :p {:id 3 :balance 0.0}]))]
+    (is (= [{:id 1 :balance 100.0}]
+           (rel/q db [[:from :p]
+                      [:where [:and [>= :balance 100] [<= :balance 500]]]])))
+    (is (nil? (rel/q db [[:from :p]
+                         [:where [:and [= :id 3] [>= :balance 100]]]]))
+        "no row has id 3 and balance >= 100")))
 
 (deftest update-regression-60-test
   (let [db1 (rel/transact {} [:insert :a {:id 0, :n 0}] [:insert :a {:id 1, :n 0}])

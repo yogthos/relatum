@@ -2,8 +2,7 @@
   (:require [relatum.engine.util :as u]
             [relatum.engine.relvar :as r]
             [relatum.expr :as sem]
-            #?(:clj [clojure.core :as clj]
-               :cljs [cljs.core :as clj]))
+            [clojure.core :as clj])
   (:refer-clojure :exclude [< <= > >=]))
 
 (def ^:dynamic *env-deps* nil)
@@ -117,11 +116,10 @@
   (fn with-ex-handler [row]
     (try
       (f row)
-      #?(:clj
-         (catch NullPointerException e
-           (u/raise (str "Null pointer exception thrown by relic expression, consider using " (safe-expr-str (into [:?] expr)))
-                    {:expr expr} e)))
-      (catch #?(:clj Throwable :cljs js/Error) e
+      (catch NullPointerException e
+        (u/raise (str "Null pointer exception thrown by relic expression, consider using " (safe-expr-str (into [:?] expr)))
+                 {:expr expr} e))
+      (catch Throwable e
         (u/raise (str "Exception thrown by relic expression " (safe-expr-str expr)) {:expr expr} e)))))
 
 (defn- to-function [f]
