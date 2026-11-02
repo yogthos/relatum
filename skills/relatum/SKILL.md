@@ -49,9 +49,12 @@ relatum gives you, over the same plain-map rows:
 - **Graphs.** Any edge table becomes a CSR graph; BFS/Dijkstra/PageRank run
   over the same rows you query.
 
-Reach for plain maps when the data is a single record, order matters, or you
-transform once and throw away. Reach for relatum when several kinds of rows
-relate to each other and wrong shape is a bug you want caught.
+Reach for plain maps when the data is a single record or you transform once
+and throw away. Reach for relatum when several kinds of rows relate to each
+other and wrong shape is a bug you want caught. Row key order survives the
+engine — declared-column order from an insert, written order from `:select`
+(computed selections keep their written position) and `[:agg cols]` grouping —
+so needing ordered output is not itself a reason to stay with plain maps.
 
 ## Declaring tables
 

@@ -22,8 +22,10 @@ it, so `engine_test.clj` (110 tests) is the port's acceptance gate.
   graph next to the plain map.
 
 The engine stores plain maps and knows nothing about the registry or about
-DDL. A database is a value, and `strip-meta` turns it back into a plain map
-when you want one.
+DDL. Rows keep their key order — declared-column order on insert, written
+order through `:select` and `[:agg cols]` — because projections and group rows
+are built from ordered key vectors, not sets. A database is a value, and
+`strip-meta` turns it back into a plain map when you want one.
 
 ## The schema layer
 

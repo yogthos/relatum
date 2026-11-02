@@ -47,12 +47,17 @@ matching rows.
 
 Rows are plain maps, and jolt maps keep insertion order, so a row's keys stay
 in the order they were associated — declared-column order from an insert, and
-selection order from `:select`, `[:agg cols]` grouping, and joins. Only
-`[:without ...]` keeps the source order minus the dropped keys.
+selection order from `:select`, `[:agg cols]` grouping, and joins. A computed
+selection keeps the position where you wrote it, and a multi-key computed
+binding keeps the binding's own order. Only `[:without ...]` keeps the source
+order minus the dropped keys.
 
 ```clojure
 (keys (first (rel/q db [[:from :sale] [:select :amt :dept]])))
 ;; => (:amt :dept)
+
+(keys (first (rel/q db [[:from :sale] [:select :dept [:double [* :amt 2]] :amt]])))
+;; => (:dept :double :amt)
 ```
 
 ## Expressions
