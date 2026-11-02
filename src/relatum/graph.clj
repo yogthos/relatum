@@ -1,6 +1,5 @@
 (ns relatum.graph
-  "CSR graph algorithms over an in-memory relatum database, ported from
-  flatiron.graph (which follows Rayforce's CSR layout).
+  "CSR graph algorithms over an in-memory relatum database, which follows CSR layout.
 
   The engine stores row maps, not typed columns, so the boundary differs from
   flatiron: edges are maps {:src s :dst d :weight w} (any seq), and node
