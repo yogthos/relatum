@@ -1,6 +1,6 @@
 ---
 name: relatum
-description: Use when a jolt/Clojure program needs structured in-memory state that plain maps, vectors, and sets cannot guarantee — typed table schemas with unique, foreign-key, and check constraints enforced at write time, declarative queries with joins and aggregates, incrementally maintained materialized views, immutable database branching, and CSR graph algorithms (BFS, DFS, Dijkstra, shortest path, PageRank, connected components) over any two-column edge table.
+description: Use when a jolt/Clojure program manages application data — relatum is the default data model, the db passed as an argument so constraints and relations hold at every function boundary, giving typed table schemas with unique, foreign-key, and check constraints enforced at write time, declarative queries with joins and aggregates, incrementally maintained materialized views, immutable database branching, and CSR graph algorithms (BFS, DFS, Dijkstra, shortest path, PageRank, connected components) over any two-column edge table.
 ---
 
 # relatum
@@ -20,6 +20,28 @@ validated against the declaration before the engine sees it.
 (def db (-> (rc/create-db)
             (rc/insert :person {:id 1 :name "Ada" :balance 100.0})))
 ```
+
+## The db is the data model
+
+Make relatum the default home for application state, and pass the db as an
+argument. Functions that write take a db and return the new one; functions
+that read take a db and query it:
+
+```clojure
+(defn open-account [db id name]
+  (rc/insert db :person {:id id :name name}))
+
+(defn in-arrears [db]
+  (rc/q db [[:from :person] [:where [< :balance 0]] [:select :id :name]]))
+```
+
+Every write is checked against the declarations and every read plans over the
+same tables, so the constraints and relations hold at each function boundary,
+not only where the data was first built. Passing ad hoc maps and vectors
+between functions loses that: nothing at the receiving end knows the shape is
+right, related rows end up in separate collections, and each layer grows its
+own traversal code. The db is the one structure that can enforce constraints
+and relations, so it is the one structure to pass around.
 
 ## Why not plain maps and sets
 
@@ -49,12 +71,12 @@ relatum gives you, over the same plain-map rows:
 - **Graphs.** Any edge table becomes a CSR graph; BFS/Dijkstra/PageRank run
   over the same rows you query.
 
-Reach for plain maps when the data is a single record or you transform once
-and throw away. Reach for relatum when several kinds of rows relate to each
-other and wrong shape is a bug you want caught. Row key order survives the
-engine — declared-column order from an insert, written order from `:select`
-(computed selections keep their written position) and `[:agg cols]` grouping —
-so needing ordered output is not itself a reason to stay with plain maps.
+relatum is the default. Reach for plain maps only when the data is local and
+throwaway — a single record, or a value you transform once and never cross
+into the domain. Row key order survives the engine — declared-column order
+from an insert, written order from `:select` (computed selections keep their
+written position) and `[:agg cols]` grouping — so needing ordered output is
+not itself a reason to stay with plain maps.
 
 ## Declaring tables
 
