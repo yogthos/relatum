@@ -122,7 +122,7 @@ weighted; edges without one default to weight 1.0.
 ```
 
 Layout is CSR (compressed sparse row) — forward and reverse adjacency in
-flat long arrays, the layout Rayforce and flatiron use, so a build is O(V+E)
+flat long arrays, so a build is O(V+E)
 and every algorithm is a tight loop over primitive arrays. See
 [docs/graphs.md](docs/graphs.md).
 

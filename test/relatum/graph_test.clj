@@ -1,7 +1,5 @@
 (ns relatum.graph-test
-  "Port of flatiron's CSR graph specification. Fixtures mirror
-  flatiron.graph-test; node values are dictionary-encoded to dense ids and
-  results come back as seqs of row maps."
+  "Tests for the CSR graph specification."
   (:require [clojure.test :refer [deftest is testing]]
             [relatum.engine :as rel]
             [relatum.graph :as g]))
