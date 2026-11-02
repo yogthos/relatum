@@ -401,6 +401,13 @@
        (rc/q rmdb [[:from :rmperson] [:agg [] [:n count]]])
        '({:n 3}))
 
+(check "readme: a materialized aggregate answers and follows writes"
+       (let [q [[:from :rmperson] [:agg [] [:total [rel/sum :balance]]]]
+             mdb (rel/mat rmdb q)]
+         [(rc/q mdb q)
+          (rc/q (rc/insert mdb :rmperson {:id 4 :name "Alan" :balance 25.0}) q)])
+       '[({:total 600.0}) ({:total 625.0})])
+
 (check "readme: update through a fn of the old row"
        (rc/q (rc/update rmdb :rmperson [= :id 3]
                         (fn [row] (assoc row :balance 25.0)))

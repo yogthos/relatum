@@ -62,6 +62,47 @@ Joins, the remaining aggregates (`rel/sum`, `rel/avg`, ...), sorting, and
 sub-selects are the same query language with `relatum.engine` aliased —
 [docs/queries.md](docs/queries.md) covers them.
 
+## Performance
+
+`bench/bench.clj` measures the engine against plain maps, vectors and sets at
+10,000 rows (`jolt bench/bench.clj` to run it). The guidance those numbers
+support:
+
+- Materialize the queries you run repeatedly. `rel/mat` installs a query's
+  dataflow into the database; after that a read doesn't re-plan, and every
+  write updates the result incrementally. You pay a little on each write and
+  save the whole computation on each read — a materialized aggregate answers
+  hundreds of times faster than reducing over the rows on every call, a
+  materialized join several times faster than rebuilding it with `map`.
+
+  ```clojure
+  (require '[relatum.engine :as rel])
+
+  (def db (rel/mat db [[:from :person] [:agg [] [:total [rel/sum :balance]]]]))
+
+  (rc/q db [[:from :person] [:agg [] [:total [rel/sum :balance]]]])
+  ;; => ({:total 600.0})
+
+  ;; the total follows the write — no re-plan, no re-computation of old rows
+  (rc/q (rc/insert db :person {:id 4 :name "Alan" :balance 25.0})
+        [[:from :person] [:agg [] [:total [rel/sum :balance]]]])
+  ;; => ({:total 625.0})
+  ```
+
+- Don't put a cold query in a hot loop. A query you never materialized is
+  planned again on every call, roughly 9–90× the plain equivalent at this
+  size. Fine for one-offs and exploration.
+- Give point lookups an index. Through a materialized `[:unique ...]`, a
+  lookup by id is about twice as fast as a linear scan of the table — but a
+  plain map lookup is still far cheaper, so when you need that last mile,
+  keep a plain map next to the database.
+- `rc/insert` validates the row against the schema, roughly six times the
+  cost of a bare engine insert. For bulk loads of data you already trust,
+  `rel/transact` with a map of table to rows is cheaper.
+
+None of this needed engine tuning; the costs sit where you'd expect them —
+planning on cold reads, index maintenance on writes.
+
 ## Updating and deleting
 
 ```clojure
@@ -83,6 +124,8 @@ example there is checked by `jolt docs/verify.clj`.
   property tests, which take a long time.
 - `jolt -M:specs` — the writ spec over `relatum.type`, exiting non-zero if
   writ's report is not `:ok`.
+- `jolt bench/bench.clj` — the engine against plain data structures at 10k
+  rows, printing per-op timings and the ratios.
 
 Note on `:specs`: it is a spec gate, not a proof gate. writ currently proves
 one law symbolically; the rest are property-checked against generated inputs,
