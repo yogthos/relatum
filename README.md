@@ -62,6 +62,70 @@ Joins, the remaining aggregates (`rel/sum`, `rel/avg`, ...), sorting, and
 sub-selects are the same query language with `relatum.engine` aliased —
 [docs/queries.md](docs/queries.md) covers them.
 
+## Graphs
+
+Any table (or query result) whose rows carry two related columns becomes a
+graph: pass the table name or a full query to `graph-of`, or edge maps
+directly to `graph`. Node values can be anything — keywords, uuids, strings,
+numbers — non-integer values are dictionary-encoded to dense ids in
+first-seen order, and everything comes back decoded:
+
+```clojure
+(require '[relatum.graph :as g])
+
+(s/create-table :follows
+  [[:src "varchar(64)"]
+   [:dst "varchar(64)"]])
+
+(def db (-> (rc/create-db)
+            (rc/insert :follows {:src "alice" :dst "bob"})
+            (rc/insert :follows {:src "bob" :dst "carol"})
+            (rc/insert :follows {:src "carol" :dst "alice"})))
+
+(def follow-graph (g/graph-of db :follows))
+
+(g/neighbors follow-graph "alice")   ;; => (("bob" 1.0))
+(g/degree follow-graph "alice")      ;; => 1
+(g/in-degree follow-graph "carol")   ;; => 1
+```
+
+Traversal and analysis return rows keyed by `:node`, so results can be
+transacted straight back into the database:
+
+```clojure
+(set (g/bfs follow-graph "alice"))
+;; => #{{:node "alice", :distance 0} {:node "bob", :distance 1}
+;;     {:node "carol", :distance 2}}
+
+(g/shortest-path follow-graph "alice" "carol")
+;; => {:path ["alice" "bob" "carol"], :distance 2.0}
+```
+
+`dfs` gives preorder visitation indices, `dijkstra` weighted distances, and
+`pagerank`/`connected-components` rank each node and label the undirected
+components. An edge with a `:weight` (any positive number) makes the graph
+weighted; edges without one default to weight 1.0.
+
+```clojure
+(def weighted (g/graph [{:src :a :dst :b :weight 1.0}
+                        {:src :b :dst :c :weight 1.0}
+                        {:src :a :dst :c :weight 5.0}]))
+
+(g/shortest-path weighted :a :c)
+;; => {:path [:a :b :c], :distance 2.0}
+
+(g/pagerank weighted :iters 30)
+;; => ({:node :a, :rank ...} ...)
+
+(g/connected-components weighted)
+;; => ({:node :a, :component :a} {:node :b, :component :a} {:node :c, :component :a})
+```
+
+Layout is CSR (compressed sparse row) — forward and reverse adjacency in
+flat long arrays, the layout Rayforce and flatiron use, so a build is O(V+E)
+and every algorithm is a tight loop over primitive arrays. See
+[docs/graphs.md](docs/graphs.md).
+
 ## Performance
 
 `bench/bench.clj` measures the engine against plain maps, vectors and sets at
