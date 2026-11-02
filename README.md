@@ -66,9 +66,11 @@ sub-selects are the same query language with `relatum.engine` aliased —
 
 Any table (or query result) whose rows carry two related columns becomes a
 graph: pass the table name or a full query to `graph-of`, or edge maps
-directly to `graph`. Node values can be anything — keywords, uuids, strings,
-numbers — non-integer values are dictionary-encoded to dense ids in
-first-seen order, and everything comes back decoded:
+directly to `graph`. Non-integer node values — keywords, uuids, strings — are
+dictionary-encoded to dense ids in first-seen order, and everything comes back
+decoded. Integers pass through as ids, so they must be nonnegative: an edge
+missing an endpoint, or carrying a negative integer endpoint, throws ex-info
+with `:relatum/error` `:missing-endpoint` or `:negative-node`.
 
 ```clojure
 (require '[relatum.graph :as g])
@@ -103,8 +105,8 @@ transacted straight back into the database:
 
 `dfs` gives preorder visitation indices, `dijkstra` weighted distances, and
 `pagerank`/`connected-components` rank each node and label the undirected
-components. An edge with a `:weight` (any positive number) makes the graph
-weighted; edges without one default to weight 1.0.
+components. An edge with a `:weight` (a finite, nonnegative number) makes the
+graph weighted; edges without one default to weight 1.0.
 
 ```clojure
 (def weighted (g/graph [{:src :a :dst :b :weight 1.0}
