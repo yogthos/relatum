@@ -418,6 +418,24 @@
        (rc/rows (rc/delete rmdb :rmperson) :rmperson)
        [])
 
+(check "readme: a write leaves the database it came from untouched"
+       (let [q [[:from :rmperson] [:agg [] [:n count]]]
+             base (rc/insert rmdb :rmperson {:id 4 :name "Alan" :balance 25.0})
+             branch (rc/insert base :rmperson {:id 5 :name "Radia" :balance 900.0})]
+         [(rc/q base q)
+          (rc/q branch q)
+          ;; a second branch off base, not off branch — base must still have 4
+          (rc/q (rc/insert base :rmperson {:id 6 :name "Kay" :balance 0.0}) q)])
+       '[({:n 4}) ({:n 5}) ({:n 5})])
+
+(check "readme: materialized views branch with the database"
+       (let [q [[:from :rmperson] [:agg [] [:total [rel/sum :balance]]]]
+             mdb (rel/mat rmdb q)
+             b1 (rel/transact mdb [:insert :rmperson {:id 7 :name "A" :balance 1.0}])
+             b2 (rel/transact mdb [:insert :rmperson {:id 8 :name "B" :balance 2.0}])]
+         [(rc/q mdb q) (rc/q b1 q) (rc/q b2 q)])
+       '[({:total 600.0}) ({:total 601.0}) ({:total 602.0})])
+
 ;; ---- exit ---------------------------------------------------------------
 
 (if (pos? @failures)

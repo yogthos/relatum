@@ -114,6 +114,39 @@ planning on cold reads, index maintenance on writes.
 against the schema. The database is a value: every write returns a new one,
 and a rejected write throws, leaving the old database untouched.
 
+## Immutability
+
+The database is a persistent value built on Clojure's ordinary immutable
+structures. There is no global store of rows anywhere: the engine namespace
+holds no state, and the dataflow graph a materialized query maintains rides
+inside the database value itself.
+
+Every write returns a new database and leaves every existing one alone, so
+branching just works:
+
+```clojure
+(def db (rc/insert db :person {:id 4 :name "Alan" :balance 25.0}))
+(def db2 (rc/insert db :person {:id 5 :name "Radia" :balance 900.0}))
+
+(rc/q db [[:from :person] [:agg [] [:n count]]])
+;; => ({:n 4})    ; the write that made db2 left db alone
+
+(rc/q db2 [[:from :person] [:agg [] [:n count]]])
+;; => ({:n 5})
+```
+
+Materialized views follow the same rule. They are part of the database value,
+so two transactions branching from one materialized database each maintain
+their own results, and the original keeps answering with what it had.
+
+The only process-global state is the table registry. `s/create-table`
+registers declarations in a process-wide atom, because a foreign key names a
+table and something has to bind that name. That is metadata, not data — rows
+and query results only ever travel through the database value. `rc/create-db`
+reads the registry once when it installs constraints; registering another
+table later changes an existing database not at all until you extend it with
+`rc/table-constraints`.
+
 Full API documentation, with verified examples, lives in [docs/](docs/) —
 tables, types, queries, writing data, constraints, and the architecture. Every
 example there is checked by `jolt docs/verify.clj`.
