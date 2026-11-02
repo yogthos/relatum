@@ -434,7 +434,53 @@
              b1 (rel/transact mdb [:insert :rmperson {:id 7 :name "A" :balance 1.0}])
              b2 (rel/transact mdb [:insert :rmperson {:id 8 :name "B" :balance 2.0}])]
          [(rc/q mdb q) (rc/q b1 q) (rc/q b2 q)])
-       '[({:total 600.0}) ({:total 601.0}) ({:total 602.0})])
+        '[({:total 600.0}) ({:total 601.0}) ({:total 602.0})])
+
+;; ---- README.md: graphs ---------------------------------------------------
+
+(require '[relatum.graph :as g])
+
+(s/create-table :rmfollows
+  [[:src :text]
+   [:dst :text]])
+
+(def rmfollow-db
+  (-> (rc/create-db)
+      (rc/insert :rmfollows {:src "alice" :dst "bob"})
+      (rc/insert :rmfollows {:src "bob" :dst "carol"})
+      (rc/insert :rmfollows {:src "carol" :dst "alice"})))
+
+(check "readme: graph-of builds a graph from a db table"
+       (let [gr (g/graph-of rmfollow-db :rmfollows)]
+         [(g/n-nodes gr)
+          (set (g/neighbors gr "alice"))
+          (g/degree gr "alice")
+          (g/in-degree gr "carol")])
+       [3 #{["bob" 1.0]} 1 1])
+
+(check "readme: bfs and shortest-path decode node values"
+       (let [gr (g/graph-of rmfollow-db :rmfollows)]
+         [(set (g/bfs gr "alice"))
+          (g/shortest-path gr "alice" "carol")])
+       '[#{{:node "alice", :distance 0} {:node "bob", :distance 1} {:node "carol", :distance 2}}
+         {:path ["alice" "bob" "carol"], :distance 2.0}])
+
+(check "readme: weighted shortest-path prefers the cheap route"
+       (let [w (g/graph [{:src :a :dst :b :weight 1.0}
+                         {:src :b :dst :c :weight 1.0}
+                         {:src :a :dst :c :weight 5.0}])]
+         [(g/shortest-path w :a :c)
+          (set (g/connected-components w))])
+       '[{:path [:a :b :c], :distance 2.0}
+         #{{:node :a, :component :a} {:node :b, :component :a} {:node :c, :component :a}}])
+
+(check "readme: pagerank ranks sum to one"
+       (let [w (g/graph [{:src :a :dst :b :weight 1.0}
+                         {:src :b :dst :c :weight 1.0}
+                         {:src :a :dst :c :weight 5.0}])
+             ranks (map :rank (g/pagerank w :iters 30))]
+         [(count ranks) (< 0.9 (reduce + ranks) 1.1)])
+       [3 true])
 
 ;; ---- exit ---------------------------------------------------------------
 
