@@ -21,7 +21,8 @@ A query pipelines operations left to right. Each one is a vector.
 
 - `[:from table]` — the rows of a table.
 - `[:where & exprs]` — keep rows satisfying every expression.
-- `[:select & cols]` — keep only the named columns.
+- `[:select & cols]` — keep only the named columns. Columns come back in the
+  order you selected them, at any width.
 - `[:without & cols]` — drop the named columns.
 - `[:extend & [col expr]]` — add a column computed from the row.
 - `[:rename {old new}]` — rename columns.
@@ -43,6 +44,16 @@ A query pipelines operations left to right. Each one is a vector.
 
 The join takes a clause mapping left columns to right columns, and merges the
 matching rows.
+
+Rows are plain maps, and jolt maps keep insertion order, so a row's keys stay
+in the order they were associated — declared-column order from an insert, and
+selection order from `:select`, `[:agg cols]` grouping, and joins. Only
+`[:without ...]` keeps the source order minus the dropped keys.
+
+```clojure
+(keys (first (rel/q db [[:from :sale] [:select :amt :dept]])))
+;; => (:amt :dept)
+```
 
 ## Expressions
 

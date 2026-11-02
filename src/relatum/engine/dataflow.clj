@@ -49,8 +49,8 @@
     (if (keyword? binding)
       (case binding
         (:* :relatum.engine/*) (u/raise "Cannot use ::rel/* in select expressions yet, use :extend.")
-        #{binding})
-      (set binding))))
+        [binding])
+      (vec binding))))
 
 (defn extend-fn [extensions]
   (case (count extensions)
@@ -745,9 +745,11 @@
     (assoc group binding (f value))))
 
 (defn group [graph self left cols elfn]
-  (let [cols (vec (set cols))
+  (let [cols (vec (distinct cols))
         group-fn (if (empty? cols) (constantly []) (apply juxt cols))
-        group->row #(zipmap cols %)
+        ;; zipmap reorders keys from 9 entries up, while jolt maps keep
+        ;; reduce-assoc insertion order past 64 keys (and it benches faster)
+        group->row (fn [vs] (reduce (fn [m [k v]] (assoc m k v)) {} (map vector cols vs)))
         adder (if (= identity elfn)
                 (fn [idx row changed]
                   (let [group (group-fn row)
@@ -840,9 +842,9 @@
          (eduction (map (fn [[group entry]] (->Grouped (group->row group) (sfn entry)))) idx)))}))
 
 (defn sorted-group [graph self left cols elfn]
-  (let [cols (vec (set cols))
+  (let [cols (vec (distinct cols))
         group-fn (if (empty? cols) (constantly []) (apply juxt cols))
-        group->row #(zipmap cols %)
+        group->row (fn [vs] (reduce (fn [m [k v]] (assoc m k v)) {} (map vector cols vs)))
 
         add-row (fn [coll row]
                   (if coll
@@ -1065,9 +1067,9 @@
 
 (defn agg* [graph self left cols aggs]
   (if (empty? aggs)
-    (conj left [transform (project-fn (vec (set cols)))])
+    (conj left [transform (project-fn (vec (distinct cols)))])
     (let [col-set (set cols)
-          cols (vec col-set)
+          cols (vec (distinct cols))
           join-clause (zipmap cols cols)
           _ (run! (fn [[binding]]
                     (when (contains? col-set binding)
@@ -1125,6 +1127,16 @@
   (if (empty? relvar)
     [[:const [{}]]]
     relvar))
+
+(defn- selection-deps
+  "The projection keys of a :select, in written order: plain columns where
+  they stand and a computed binding's columns where it stands, first
+  occurrence only."
+  [selections]
+  (vec (distinct
+         (into []
+               (mapcat (fn [s] (if (vector? s) (extend-form-cols s) [s])))
+               selections))))
 
 (defn- save-view [graph self index view-fn]
   (let [sid (id self)
@@ -1492,9 +1504,8 @@
         :select
         (let [[_ & selections] head
               left (relvar-or-dual left)
-              cols (filterv keyword? selections)
               extensions (filterv vector? selections)
-              deps (vec (into (set cols) (mapcat extend-form-cols) extensions))
+              deps (selection-deps selections)
               project (project-fn deps)]
           (if (seq extensions)
             (conj left (into [:extend] extensions) [transform project])
@@ -1503,9 +1514,8 @@
         :select-unsafe
         (let [[_ & selections] head
               left (relvar-or-dual left)
-              cols (filterv keyword? selections)
               extensions (filterv vector? selections)
-              deps (vec (into (set cols) (mapcat extend-form-cols) extensions))
+              deps (selection-deps selections)
               project (project-fn deps)]
           (if (seq extensions)
             (add-implicit-joins #(conj left [transform-unsafe (comp project (extend-fn extensions))]))
