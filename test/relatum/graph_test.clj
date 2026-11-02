@@ -74,6 +74,12 @@
     (is (= 0 (g/in-degree gr 2)) "2 is not a value, so it resolves to internal id 2 (:b)")
     (is (nil? (g/in-degree gr 9)) "9 is neither a value nor a valid id")))
 
+(deftest integer-ids-resolve-in-degree-and-path-queries-on-interned-graphs
+  (let [gr (g/graph [{:src :a :dst :b} {:src :b :dst :c}])] ; ids: :a→0, :b→1, :c→2
+    (is (= 1 (g/degree gr 0)) "internal id 0 is :a")
+    (is (= {:path [:a :b :c] :distance 2.0} (g/shortest-path gr 0 2))
+        "path endpoints given as internal ids decode back to node values")))
+
 (deftest interning-decodes-results
   (let [graph (g/graph [{:src :a :dst :b} {:src :b :dst :c}])
         d (into {} (map (juxt :node :distance)) (g/bfs graph :a))]
