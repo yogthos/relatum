@@ -131,6 +131,43 @@
 (bench :ins-agg        "engine   insert + mat agg  " #(rel/transact db-agg [:insert :emp (fresh-row)]))
 (bench :ins-rc         "rc       insert validated  " #(rc/insert vdb :bench-emp (fresh-row)))
 
+;; ---- nested access ---------------------------------------------------------
+
+(s/create-table* :bench-order [[:id :int :primary :key]
+                               [:emp-id :int :references :bench-emp]
+                               [:status :keyword]])
+
+(def access-db-with (-> (rc/create-db)
+                        (rc/insert-many :bench-emp (take 1000 rows))
+                        (rc/insert-many :bench-order
+                                        (map (fn [i] {:id i :emp-id (mod i 1000) :status (if (odd? i) :open :shipped)})
+                                             (range N)))))
+(def access-db-without (rel/transact {} {:bench-order (vec (rc/rows access-db-with :bench-order))}))
+
+(check "access pk read"
+       (get-in (rc/index access-db-with :bench-order/by-id) [500])
+       (get (into {} (map (juxt :id identity)) (rc/rows access-db-with :bench-order)) 500))
+(check "access fk read"
+       (get (rc/index access-db-with :bench-order/by-emp-id) 500)
+       (set (filter (fn [r] (= 500 (:emp-id r))) (rc/rows access-db-with :bench-order))))
+
+(def bench-order-pk->row
+  (into {} (map (juxt :id identity)) (rc/rows access-db-with :bench-order)))
+(def bench-order-emp->rows
+  (group-by :emp-id (rc/rows access-db-with :bench-order)))
+
+(println)
+(println "---- nested access (N orders over 1000 employees) ----")
+(bench :access-pk      "access   get-in by-id        " #(get-in (rc/index access-db-with :bench-order/by-id) [500]))
+(bench :access-plain-pk "plain    hand id->row get    " #(get bench-order-pk->row 500))
+(bench :access-fk      "access   get by emp-id       " #(get (rc/index access-db-with :bench-order/by-emp-id) 500))
+(bench :access-plain-fk "plain    group-by get        " #(get bench-order-emp->rows 500))
+
+(println)
+(println "---- writes with access indexes (single row) ----")
+(bench :ins-access-none  "engine   insert, no index     " #(rel/transact access-db-without [:insert :bench-order (fresh-row)]))
+(bench :ins-access-rc    "rc       insert + constraints+indexes " #(rc/insert access-db-with :bench-order {:id (+ N 960000 (swap! insert-i inc)) :emp-id 500 :status :open}))
+
 ;; ---- summary ---------------------------------------------------------------
 
 (defn- x [krel kplain]

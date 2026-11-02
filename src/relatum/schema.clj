@@ -62,6 +62,12 @@
 ;; tables
 
 (defonce ^:private registry (atom {}))
+(defonce ^:private index-registry (atom {}))
+;; bumped on every registry/index mutation, so access-indexes can cache its
+;; derivation instead of recomputing it on every read
+(defonce ^:private schema-gen (atom 0))
+
+(defn- bump-gen! [] (swap! schema-gen inc))
 
 (defn build-table*
   "Validate a declaration into a table description, throwing on a bad one. The
@@ -76,6 +82,7 @@
   [name cols]
   (let [t (build-table* name cols)]
     (swap! registry assoc name t)
+    (bump-gen!)
     t))
 
 (defn table
@@ -89,14 +96,86 @@
   @registry)
 
 (defn forget
-  "Drop a table from the registry. Returns the table removed."
+  "Drop a table from the registry, and with it any indexes declared on it.
+  Returns the table removed."
   [name]
-  (let [t (get @registry name)] (swap! registry dissoc name) t))
+  (let [t (get @registry name)]
+    (swap! registry dissoc name)
+    (swap! index-registry
+           (fn [idx] (into {} (remove #(= name (-> % val :table))) idx)))
+    (bump-gen!)
+    t))
 
 (defn column
   "The column description for a table's column, or nil."
   [table-name column-name]
   (plan/column (table table-name) column-name))
+
+;; ---------------------------------------------------------------------------
+;; access indexes
+;; The registry above owns tables; this one owns indexes declared on top of
+;; them. Derived indexes (pk, unique columns, foreign keys) are not stored -
+;; they are recomputed from the table on demand, so they can never drift from
+;; the declaration they came from.
+
+(defn create-index
+  "Declare a composite access index over a registered table, e.g
+
+    (create-index :order [:customer :status])
+
+  opts may carry :type (:hash, the default, or :btree for ordered access).
+  Registers it under its derived name (:order/by-customer+status) and returns
+  the descriptor. Throws the schema layer's ex-info on a rejected declaration
+  and on a duplicate registration."
+  [table-name cols & {:as opts}]
+  (let [t (table table-name)]
+    (when-not t
+      (throw (ex-info (str "Unknown table " table-name)
+                      {:relatum/error :unknown-table :table table-name
+                       :known (vec (keys (tables)))})))
+    (let [idx (value! (plan/build-index t cols opts))
+          existing (get @index-registry (:name idx))]
+      (when (and existing (not= existing idx))
+        (throw (rejected {:ok false :error :index-name-conflict
+                          :message (str "Index " (:name idx) " is already declared")
+                          :table table-name :index (:name idx)
+                          :existing existing})))
+      (swap! index-registry assoc (:name idx) idx)
+      (bump-gen!)
+      idx)))
+
+(defn forget-index
+  "Drop a declared index. Returns the descriptor removed."
+  [index-name]
+  (let [i (get @index-registry index-name)]
+    (swap! index-registry dissoc index-name)
+    (bump-gen!)
+    i))
+
+(defonce ^:private access-cache (volatile! {:gen -1 :indexes {}}))
+
+(defn access-indexes
+  "Every access index this process serves, keyed by name: declared indexes
+  plus the ones derived from each registered table. Reads go through this
+  map; core/create-db materializes all of them. Derived indexes are
+  recomputed only when the schema changed since the last call."
+  []
+  (let [g @schema-gen]
+    (if (= g (:gen @access-cache))
+      (:indexes @access-cache)
+      (loop []
+        (let [g0 @schema-gen
+              all (merge (into {} (comp (mapcat plan/derived-indexes)
+                                        (map (juxt :name identity)))
+                               (vals @registry))
+                         @index-registry)]
+          ;; every mutation bumps the generation, so an unchanged gen across
+          ;; the build proves the snapshot is consistent; otherwise try again
+          ;; rather than caching a mixed-generation map
+          (if (= g0 @schema-gen)
+            (do (vreset! access-cache {:gen g0 :indexes all})
+                all)
+            (recur)))))))
 
 (defn column-names [table-name]
   (plan/column-names (table table-name)))

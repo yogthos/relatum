@@ -11,16 +11,49 @@
             [relatum.schema :as s]))
 
 (defn create-db
-  "An empty database with every registered table's constraints installed."
+  "An empty database with every registered table's constraints installed and
+  every access index materialized, so reads like (get-in (index db
+  :customer/by-id) [42]) are plain map lookups from the start."
   []
-  (reduce (fn [db t] (rel/mat db (s/constraint-query t)))
-          {}
-          (vals (s/tables))))
+  (let [db (reduce (fn [db t] (rel/mat db (s/constraint-query t)))
+                   {}
+                   (vals (s/tables)))]
+    (reduce (fn [db idx] (rel/mat db (plan/access-query idx)))
+            db
+            (vals (s/access-indexes)))))
 
 (defn table-constraints
   "Install a single table's declared constraints into db."
   [db table-name]
   (rel/mat db (s/constraint-query (s/table table-name))))
+
+(defn- index-descriptor
+  [name]
+  (or (get (s/access-indexes) name)
+      (throw (ex-info (str "Unknown index " name)
+                      {:relatum/error :unknown-index :index name
+                       :known (vec (sort (keys (s/access-indexes))))}))))
+
+(defn index
+  "The nested map of an access index, by its name.
+
+    (index db :order/by-cust-id)      ; => {1 #{row ...}, ...}
+    (get-in (index db :user/by-id) [42])
+
+  The map is the engine's own incrementally-maintained index, so reads cost
+  map lookups and each transaction keeps it current. :unique indexes map key
+  to row; :hash and :btree map each key to a set, nested one level per
+  column. A name that was never declared or derived throws
+  {:relatum/error :unknown-index}; an index that exists but holds nothing
+  reads as {}."
+  ([db name]
+   (let [idx (index-descriptor name)
+         q (plan/access-query idx)]
+     ;; mat is idempotent; this only builds when the index was declared
+     ;; after this db was created
+     (or (rel/index db q)
+         (let [db' (rel/mat db q)]
+           (or (rel/index db' q) {}))))))
 
 (defn- coerce [table-name row]
   (let [t (s/table table-name)]
@@ -47,6 +80,20 @@
                          :clause {(:name c) parent-column}}))))))
         (:columns t)))
 
+(defn- parent-pk-lookup
+  "When a reference points at the parent's primary key, a [db value] -> row
+  lookup through the parent's pk index - a map lookup, never a scan. Nil when
+  the clause is compound or the parent declares no key, so the caller falls
+  back to querying the parent table."
+  [table clause catalog]
+  (when (= 1 (count clause))
+    (let [[_child-col parent-col] (first clause)
+          pk (-> (get catalog table) :pk first)]
+      (when (and (= parent-col pk)
+                 (contains? (s/access-indexes) (plan/index-name table [pk])))
+        (let [idx-name (plan/index-name table [pk])]
+          (fn [db v] (get-in (index db idx-name) [v])))))))
+
 (defn- check-references
   "Throw when row names a parent that is not there.
 
@@ -56,8 +103,16 @@
   [db table-name row]
   (let [catalog (s/tables)]
     (doseq [{:keys [table clause]} (fk-clauses (s/table table-name) catalog)
-            :let [parents (vec (rel/q db [[:from table]]))
-                  verdict (integrity/check-verdict clause [row] parents)]
+            :let [fast (parent-pk-lookup table clause catalog)
+                  ;; the fast path hands check-verdict one synthetic parent
+                  ;; holding the looked-up value: it agrees with the row on
+                  ;; the clause exactly when the parent exists
+                  parents (if fast
+                            (let [v (get row (key (first clause)))]
+                              (when-some [p (fast db v)]
+                                [{(val (first clause)) v}]))
+                            (vec (rel/q db [[:from table]])))
+                  verdict (integrity/check-verdict clause [row] (vec parents))]
             :when (not (:ok verdict))]
       (throw (ex-info (str "Foreign key violation: " table-name " references " table)
                       {:relatum/error :foreign-key-violation

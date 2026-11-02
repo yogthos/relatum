@@ -488,3 +488,84 @@
   (when table
     (str "(create-table " (pr-str (:name table)) "\n   ["
          (str/join "\n    " (map ddl-column (:columns table))) "])")))
+
+;; ---------------------------------------------------------------------------
+;; access indexes
+;; An access index is a materialized nested map over a table's columns, named
+;; so the map is reachable without rebuilding its query: :order/by-customer for
+;; [[:from :order] [:hash :customer]]. The primary key and unique columns
+;; derive :unique indexes (aliases of the constraint's own index, so no extra
+;; memory), foreign keys derive :hash indexes over the referencing column, and
+;; anything else can be declared as a composite.
+
+(def ^:private index-types #{:hash :btree})
+
+(defn index-name
+  "The derived name of the index over cols: :table/by-a+id for [:a :id]."
+  [table cols]
+  (keyword (str (some-> (namespace table) (str "/"))
+                (name table) "/by-"
+                (str/join "+" (map name cols)))))
+
+(defn- index [table cols type origin]
+  {:name (index-name table cols) :table table :cols cols :type type :origin origin})
+
+(defn derived-indexes
+  "The indexes a table's own declaration implies: a :unique index over the
+  primary key, one per unique column that is not the key, and a :hash index
+  per foreign key column over its referencing column."
+  [table]
+  (let [pk-set (set (:pk table))]
+    (into []
+          (concat
+           (when (seq (:pk table)) [(index (:name table) (:pk table) :unique :pk)])
+           (for [c (:columns table)
+                 :when (and (:unique? c) (not (pk-set (:name c))))]
+             (index (:name table) [(:name c)] :unique :unique))
+           (for [fk (:fks table)]
+             (index (:name table) [(:column fk)] :hash :fk))))))
+
+(defn build-index
+  "Validate a declared index over cols into a descriptor, as a verdict.
+
+  opts may carry :type (:hash, the default, or :btree for ordered access).
+  Rejects an empty or non-vector column list, unknown or repeated columns,
+  an unsupported type, and a name a derived index already owns."
+  [table cols opts]
+  (let [declared (:type opts :hash)
+        names (set (column-names table))]
+    (cond
+      (not (vector? cols)) (fail :bad-index "Index columns must be a vector" {:table (:name table)})
+      (empty? cols) (fail :bad-index "An index needs at least one column" {:table (:name table)})
+      (not (contains? index-types declared))
+      (fail :unknown-index-type
+            (str "Unknown index type " (pr-str declared))
+            {:table (:name table) :type declared :known (vec (sort index-types))})
+      :else
+      (let [unknown (into [] (remove names) cols)
+            dupes (into [] (comp (filter (fn [[_ n]] (> n 1))) (map key)) (frequencies cols))]
+        (cond
+          (seq unknown)
+          (fail :unknown-column
+                (str "Unknown column(s) " (pr-str unknown) " for " (:name table))
+                {:table (:name table) :columns unknown :known (column-names table)})
+          (seq dupes)
+          (fail :duplicate-column
+                (str "Duplicate column(s) " (pr-str dupes) " in index of " (:name table))
+                {:table (:name table) :columns dupes})
+          :else
+          (let [i (index (:name table) cols declared :declared)
+                derived (into #{} (map :name) (derived-indexes table))]
+            (if (contains? derived (:name i))
+              (fail :index-name-conflict
+                    (str "Index " (:name i) " is already derived from " (:name table)
+                         "'s own declaration")
+                    {:table (:name table) :index (:name i) :cols cols})
+              (succeed i))))))))
+
+(defn access-query
+  "The relvar query whose materialized value is an index descriptor's nested
+  map. Feeding this to mat keeps the map current as the table changes, and
+  rel/index on it is the map itself."
+  [{:keys [table cols type]}]
+  (into [[:from table]] [(into [type] cols)]))
