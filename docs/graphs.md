@@ -1,10 +1,6 @@
 # Graphs
 
-relatum.graph ports flatiron's graph engine onto the relatum database. The
-algorithms — BFS, DFS, Dijkstra, PageRank, connected components, shortest
-path — run over a CSR (compressed sparse row) layout in flat long arrays, the
-same layout Rayforce uses, so a build is O(V+E) and every traversal is a
-tight loop over primitives.
+relatum.graph is a graph engine onto the relatum database. It rins BFS, DFS, Dijkstra, PageRank, connected components, shortest path over a CSR (compressed sparse row) layout in flat long arrays, so a build is O(V+E) and every traversal is a tight loop over primitives.
 
 ## Building a graph
 
