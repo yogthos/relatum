@@ -5,6 +5,7 @@
             [relatum.core-test]
             [relatum.integrity-test]
             [relatum.query-test]
+            [relatum.regression-test]
             [relatum.schema-test]
             [relatum.table-test]
             [relatum.relationship-test]
@@ -12,6 +13,7 @@
 
 (def ^:private fast-namespaces
   ['relatum.expr-test 'relatum.query-test 'relatum.integrity-test 'relatum.core-test 'relatum.engine-test
+   'relatum.regression-test
    'relatum.schema-test 'relatum.table-test 'relatum.relationship-test])
 
 (def ^:private all-namespaces

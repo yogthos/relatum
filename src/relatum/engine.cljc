@@ -224,7 +224,7 @@
            db (reduce dataflow/materialize db missing)]
        (reduce-kv
          (fn [m k qr]
-           (if (map? q)
+           (if (map? qr)
              (assoc m k (q db (:q qr) qr))
              (assoc m k (q db qr))))
          {}
@@ -232,11 +232,14 @@
      (dataflow/q db query-or-binds)))
   ([db query opts]
    (let [{:keys [sort
-                 rsort
-                 xf]
-          into-coll :into} opts
+                  rsort
+                  xf]
+           into-coll :into} opts
 
-         sort* (or sort rsort)
+          sort* (let [expr (or sort rsort)]
+                  (cond (nil? expr) nil
+                        (coll? expr) expr
+                        :else [expr]))
          sort-fns (mapv e/row-fn sort*)
          rs (dataflow/qraw db query)
          sort-fn (when (seq sort-fns)
@@ -362,8 +365,8 @@
     {:default #{}
      :custom-node (fn [left cols [binding]]
                     (conj left
-                          [dataflow/group cols f]
-                          [dataflow/transform-unsafe (dataflow/bind-group binding (fn [x] (or x #{})))]))}))
+                           [dataflow/group cols f]
+                           [dataflow/transform-unsafe (dataflow/bind-group binding (fn [x] (if x (set (keys x)) #{})))]))}))
 
 ;; --
 ;; count-distinct
@@ -477,7 +480,7 @@
 ;; --
 ;; env api
 
-(defn get-env [db] (first (q db ::e/Env)))
+(defn get-env [db] (::e/env (first (q db ::e/Env))))
 
 (defn set-env-tx [env]
   [:replace-all ::e/Env {::e/env env}])

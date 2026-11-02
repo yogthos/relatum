@@ -151,6 +151,67 @@
       (s/forget :on-good)
       (s/forget :fkparent))))
 
+(deftest an-unknown-on-delete-value-rejects
+  (s/create-table* :odparent [[:id :int :primary :key]])
+  (is (= :unknown-on-delete
+         (:relatum/error (err #(s/create-table* :od-bad
+                                                [[:pid :int :references :odparent
+                                                  :on-delete :restrict]])))))
+  (is (= :unknown-on-delete
+         (:relatum/error (err #(s/build-table* :od-bad-without-reference
+                                               [[:v :int :on-delete :restrict]])))))
+  (is (= :unknown-on-delete
+         (:relatum/error (err #(s/build-table* :od-false
+                                               [[:v :int :on-delete false]])))))
+  (s/forget :odparent))
+
+(deftest a-column-cannot-be-both-required-and-nullable
+  (is (= :required-and-nullable
+         (:relatum/error (err #(s/build-table* :bad-reqnull
+                                               [[:id :int :primary :key]
+                                                [:v :text :required :nullable]]))))))
+
+(deftest a-check-attribute-survives-a-render-round-trip
+  (s/create-table* :rendchk [[:id :int :primary :key]
+                             [:qty :int :check [< :qty 100]]
+                             [:n :int :auto]
+                             [:flag :bool :default false]])
+  (let [rendered (s/ddl :rendchk)
+        [_ _ cols] (read-string rendered)
+        re-parsed (s/build-table* :rendchk2 cols)]
+    (is (string? rendered))
+    ;; a check form holds its evaluated operator, which no print/read cycle
+    ;; can hand back as the same object; pin the rendered text and that the
+    ;; re-parsed column still carries a check
+    (is (re-find #"\[:qty \"int\" :required :check \[" rendered))
+    (is (re-find #"\[:n \"int\" :required :auto\]" rendered))
+    (is (re-find #"\[:flag \"bool\" :required :default false\]" rendered))
+    (is (= (mapv #(select-keys % [:name :auto? :default])
+                 (:columns (s/table :rendchk)))
+           (mapv #(select-keys % [:name :auto? :default])
+                 (:columns re-parsed))))
+    (is (some? (:check (some #(when (= :qty (:name %)) %)
+                             (:columns re-parsed)))))
+    (s/forget :rendchk2))
+  (s/forget :rendchk))
+
+(deftest a-false-check-survives-planning-and-rendering
+  (let [t (s/create-table* :falsechk [[:id :int :primary :key] [:qty :int :check false]])
+        rendered (s/ddl :falsechk)]
+    (is (= [[:qty false]] (:checks t)))
+    (is (re-find #":check false" rendered))
+    (let [[_ _ cols] (read-string rendered)
+          re-parsed (s/build-table* :falsechk2 cols)]
+      (is (false? (:check (some #(when (= :qty (:name %)) %)
+                                (:columns re-parsed))))))))
+
+(deftest a-namespaced-table-name-makes-a-valid-record-name
+  ;; create-table expands to (do ... nil), so the pin is the record it defines
+  (eval '(relatum.schema/create-table :foo/nsperson
+           [[:id :int :primary :key] [:name :text]]))
+  (is (class? (resolve 'FooNsperson)))
+  (s/forget :foo/nsperson))
+
 (deftest ddl->constraints-test
   (s/create-table* :fruit4
     [[:name "varchar(8)" :primary :key]

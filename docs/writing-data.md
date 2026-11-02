@@ -63,6 +63,11 @@ The engine's own `[:update table fn-or-map exprs]` command (below) also takes
 a map like `{:balance inc}`, but `rc/update` does not, so stick to functions
 here.
 
+All matching rows are replaced in one transaction. An update whose final
+state is valid therefore succeeds even when no intermediate state would be,
+so swapping the unique values of two rows works, and a rejected update leaves
+the database untouched.
+
 ## Deleting
 
 ```clojure

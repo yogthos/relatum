@@ -151,7 +151,7 @@
 (defn- type-sym [table-name]
   (let [parts (-> (str table-name)
                   (str/replace #"^:" "")
-                  (str/split #"[-_.]+"))]
+                  (str/split #"[/:._-]+"))]
     (symbol (apply str (map str/capitalize parts)))))
 
 (defn record-fields

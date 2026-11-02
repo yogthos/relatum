@@ -762,7 +762,10 @@
                   (let [group (group-fn row)
                         [rows eset] (idx group)
                         nrows (u/set-conj rows row)
-                        nset (if-some [v (elfn row)] (u/set-conj eset v) eset)]
+                        ;; values are refcounted, not set-members: two rows
+                        ;; may hold the same value, and deleting one must
+                        ;; leave the other's value in place
+                        nset (if-some [v (elfn row)] (update eset v (fnil inc 0)) eset)]
                     (if (same-size? nrows rows)
                       idx
                       (do (u/add-to-mutable-set changed group)
@@ -779,16 +782,23 @@
                               (dissoc idx group)
                               (assoc idx group nset))))))
                   (fn [idx row changed]
-                    (let [group (group-fn row)
-                          [rows eset] (idx group)
-                          nrows (disj rows row)
-                          nset (if-some [v (elfn row)] (disj eset v) eset)]
-                      (if (same-size? nrows rows)
-                        idx
-                        (do (u/add-to-mutable-set changed group)
-                            (if (empty? nrows)
-                              (dissoc idx group)
-                              (assoc idx group [nrows nset])))))))
+                    ;; deleting from a group with no entry is a no-op, like
+                    ;; the identity branch's (disj #{} row)
+                    (if-some [entry (idx (group-fn row))]
+                      (let [group (group-fn row)
+                            [rows eset] entry
+                            nrows (disj rows row)
+                            nset (if-some [v (elfn row)]
+                                   (let [n (dec (or (eset v) 1))]
+                                     (if (pos? n) (assoc eset v n) (dissoc eset v)))
+                                   eset)]
+                        (if (same-size? nrows rows)
+                          idx
+                          (do (u/add-to-mutable-set changed group)
+                              (if (empty? nrows)
+                                (dissoc idx group)
+                                (assoc idx group [nrows nset])))))
+                      idx)))
 
         sfn (if (= identity elfn)
               identity
@@ -1349,13 +1359,16 @@
                               #(some-> % vector))
                         card (count const-exprs)
                         st (fn [test]
-                             (let [subseq-fn (if (= :btree itype)
-                                               subseq
-                                               hash-index-range-iterable)
-                                   e (first const-exprs)
-                                   vxf (mapcat (comp nxt val))]
-                               (if (contains? #{df dfe} (v i))
-                                 {:xf (mapcat (fn [m] (eduction vxf (subseq-fn m test e))))}
+                            (let [subseq-fn (if (= :btree itype)
+                                                subseq
+                                                hash-index-range-iterable)
+                                    e (first const-exprs)
+                                    vxf (mapcat (comp nxt val))]
+                                ;; jolt rejects a set literal built from two
+                                ;; identical values (the JVM reader dedupes
+                                ;; them), so compare by identity instead
+                                (if (or (identical? df (v i)) (identical? dfe (v i)))
+                                  {:xf (mapcat (fn [m] (eduction vxf (subseq-fn m test e))))}
                                  (update
                                    (v i)
                                    :post

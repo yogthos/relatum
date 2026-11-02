@@ -56,12 +56,14 @@ expansion time for the macro and via an exception for `create-table*`.
 - `:references table` — a foreign key. The referenced column is the parent's
   primary key unless you name one with `:on`.
 - `:on column` — which column of the referenced table the key points at.
-- `:on-delete :cascade` — deleting a parent row deletes its children.
+- `:on-delete :cascade` — deleting a parent row deletes its children. No
+  other value is accepted; an unknown one rejects with `:unknown-on-delete`.
 - `:auto` — marks the column as automatically supplied. relatum records the
   flag in the column description and does not generate values itself.
 
 Without `:nullable`, every column is required, so most declarations never say
-`:required` explicitly. Say `:nullable` for the ones you want optional.
+`:required` explicitly. Say `:nullable` for the ones you want optional. The
+two together are contradictory and reject with `:required-and-nullable`.
 
 Attributes that take a value (`:default`, `:check`, `:references`, `:on`,
 `:on-delete`) must actually get one. A truncated tail like

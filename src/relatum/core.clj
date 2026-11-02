@@ -78,16 +78,18 @@
   (reduce (fn [d r] (insert d table-name r)) db rows))
 
 (defn update
-  "Update rows matching where with f, validating the new row shape."
+  "Update rows matching where with f, validating the new row shape. All rows
+  are replaced in one transaction, so an update whose final state is valid
+  succeeds even when no intermediate state would be (swapping two unique
+  values), and a rejected update leaves the database untouched."
   [db table-name where f]
-  (let [t (s/table table-name)
-        rows (rel/q db [[:from table-name] [:where where]])]
-    (reduce (fn [d old]
-              (let [new (coerce table-name (f old))]
-                (rel/transact d [:delete-exact table-name old]
-                                [:insert table-name new])))
-            db
-            rows)))
+  (let [rows (rel/q db [[:from table-name] [:where where]])]
+    ;; all deletes before all inserts: the unique constraint fires on the
+    ;; incremental flow, so an interleaved delete/insert of a swapped key
+    ;; would collide with a row the deletes have not reached yet
+    (apply rel/transact db
+           (concat (for [old rows] [:delete-exact table-name old])
+                   (for [old rows] [:insert table-name (coerce table-name (f old))])))))
 
 (defn q [db query] (rel/q db query))
 (defn what-if [db query & ops] (apply rel/what-if db query ops))

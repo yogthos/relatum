@@ -98,24 +98,40 @@
   [table col nm declared opts]
   (let [o (:value opts)
         primary? (true? (:primary? o))
-        nullable? (true? (:nullable? o))]
-    (if (and primary? nullable?)
+        nullable? (true? (:nullable? o))
+        required? (true? (:required? o))
+        on-delete (:on-delete o)]
+    (cond
+      (and primary? nullable?)
       (fail :nullable-primary-key
             (str "Column " nm " is a primary key and cannot be nullable")
             {:table table :column nm})
+
+      (and required? nullable?)
+      (fail :required-and-nullable
+            (str "Column " nm " cannot be both required and nullable; a nullable column is not required")
+            {:table table :column nm})
+
+      (and (some? on-delete) (not (#{:cascade :delete} on-delete)))
+      (fail :unknown-on-delete
+            (str "Column " nm " has :on-delete " (pr-str on-delete)
+                 ", but :cascade is the only supported value")
+            {:table table :column nm :on-delete on-delete})
+
+      :else
       (succeed
        {:name nm
         :type (type/parse-type declared)
         :primary? primary?
         ;; a primary key is necessarily required and unique, derived not declared
         :nullable? (and nullable? (not primary?))
-        :required? (or primary? (true? (:required? o)) (not nullable?))
+        :required? (or primary? required? (not nullable?))
         :unique? (or primary? (true? (:unique? o)))
         :auto? (true? (:auto? o))
         :default (:default o)
         :check (:check o)
         :references (:references o)
-        :on-delete (:on-delete o)
+        :on-delete on-delete
         :on (:on o)
         :ddl col}))))
 
@@ -161,7 +177,7 @@
    :columns columns
    :pk (mapv :name (filter :primary? columns))
    :uniques (mapv :name (filter :unique? columns))
-   :checks (into [] (keep (fn [c] (when-let [e (:check c)] [(:name c) e])))
+   :checks (into [] (keep (fn [c] (when (some? (:check c)) [(:name c) (:check c)])))
                  columns)
    :fks (into [] (keep (fn [c] (when (:references c)
                                  {:column (:name c)
@@ -369,19 +385,29 @@
       :bool [boolean? nm]
       :uuid [uuid? nm]
       :keyword [keyword? nm]
+      ;; the descriptor carries the exact instance? predicate for these kinds
+      (:date :timestamp) [(:pred (:type c)) nm]
       nil)))
 
 (defn check-op
-  "The engine's :check op for a column, or nil when its kind has no predicate."
+  "The engine's :check op for a column: its type predicate, and its declared
+  :check form and-ed in when the declaration carries one."
   [table c]
   (let [base (type-pred c)
+        declared (:check c)
+        declared? (some? declared)
         ;; a nullable column must be allowed to hold nil
-        pred (when base
-               (if (:nullable? c) [:or [nil? (:name c)] base] base))]
-    (when pred
+        pred (cond
+               (and base declared?) [:and base declared]
+               base base
+               declared? declared)
+        pred (when (some? pred)
+               (if (:nullable? c) [:or [nil? (:name c)] pred] pred))]
+    (when (some? pred)
       [:check {:pred pred
                :error (str "column " (:name c) " of " (:name table)
-                           " must be " (:sql (:type c)))}])))
+                           " must be " (:sql (:type c))
+                           (when declared? ", and its :check must hold"))}])))
 
 (defn- unique-ops [table]
   (let [pk (:pk table)
@@ -446,15 +472,15 @@
     (:nullable? c) (conj :nullable)
     (and (:required? c) (not (:primary? c)) (not (:nullable? c))) (conj :required)
     (and (:unique? c) (not (:primary? c))) (conj :unique)
-    (:default c) (into [:default (:default c)])
+    (:auto? c) (conj :auto)
+    (some? (:default c)) (into [:default (:default c)])
+    (some? (:check c)) (into [:check (:check c)])
     (:references c) (into [:references (:references c)])
     (:on c) (into [:on (:on c)])
     (:on-delete c) (into [:on-delete (:on-delete c)])))
 
 (defn- ddl-column [c]
-  (let [attrs (ddl-attributes c)]
-    (str "  " (pr-str (:name c)) " " (pr-str (:sql (:type c)))
-         (when (seq attrs) (str " " (str/join " " (map pr-str attrs)))))))
+  (pr-str (into [(:name c) (:sql (:type c))] (ddl-attributes c))))
 
 (defn render
   "Render a table back to the DDL form create-table accepts."
