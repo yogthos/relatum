@@ -231,6 +231,22 @@
     (is (= [{:n 1}] (rel/what-if db R {A [a1]} [:delete-exact A a1] [:insert A a1])))
     (is (= [{:n 2}] (rel/what-if db R {A [a1, a2]} [:delete-exact A a1] [:insert A a1])))))
 
+;; jolt maps keep assoc insertion order at any width an engine row reaches, so
+;; rows can come back in the order the query (or table declaration) wrote them
+;; down. These pin the paths that used to scramble it.
+(deftest row-key-order-test
+  (let [ks (mapv keyword (map #(str "k" %) (range 12)))
+        db (rel/transact {} {:S #{(into {} (map (fn [k] [k 1])) ks)}})]
+    ;; select: selection order, not hash order
+    (is (= [:k0 :k11 :k2]
+           (keys (first (rel/q db [[:from :S] [:select :k0 :k11 :k2]])))))
+    ;; agg with no aggregates: group keys in written order
+    (is (= (conj ks :n)
+           (keys (first (rel/q db [[:from :S] [:agg ks [:n count]]])))))
+    ;; agg grouping only (project through set): written order
+    (is (= ks
+           (keys (first (rel/q db [[:from :S] [:agg ks]])))))))
+
 (deftest join-test
   (let [A [[:from :A]]
         B [[:from :B]]
