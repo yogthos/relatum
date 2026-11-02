@@ -111,6 +111,7 @@
         :nullable? (and nullable? (not primary?))
         :required? (or primary? (true? (:required? o)) (not nullable?))
         :unique? (or primary? (true? (:unique? o)))
+        :auto? (true? (:auto? o))
         :default (:default o)
         :check (:check o)
         :references (:references o)

@@ -11,9 +11,9 @@
      (do ~@body nil)
      (catch Throwable e#
        (let [d# (ex-data e#)]
-         (or (and (= ~data-key (:relatum.engine/error d#)) d#)
-             (and (= ~data-key (:relatum/error d#)) d#)
-             {:unexpected (some-> e# .getMessage)})))))
+         (cond (= ~data-key (:relatum.engine/error d#)) d#
+               (= ~data-key (:relatum/error d#)) d#
+               :else nil)))))
 
 (s/create-table :tfruit
   [[:name "varchar(8)" :primary :key]
@@ -50,7 +50,7 @@
 
 (deftest primary-key-enforced-test
   (let [db (constrained-db :tfruit)]
-    (is (some? (throws-data :unique-violation
+    (is (some? (throws-data :unique-key-violation
                  (rel/transact db
                                [:insert :tfruit {:name "apple" :appearance "r" :cost 1 :grade 1}]
                                [:insert :tfruit {:name "apple" :appearance "s" :cost 2 :grade 2}])))
@@ -82,7 +82,7 @@
                               [:insert :line {:order-id 1 :n 1 :qty 2}]
                               [:insert :line {:order-id 1 :n 2 :qty 3}]))))
     (testing "but not the same tuple"
-      (is (some? (throws-data :unique-violation
+      (is (some? (throws-data :unique-key-violation
                    (rel/transact db
                                  [:insert :line {:order-id 1 :n 1 :qty 2}]
                                  [:insert :line {:order-id 1 :n 1 :qty 9}])))))))

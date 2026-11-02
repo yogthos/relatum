@@ -54,7 +54,10 @@
   (let [id (-> (s/table :pk-demo) :columns first)]
     (is (:required? id))
     (is (:unique? id))
-    (is (not (:nullable? id)))))
+    (is (not (:nullable? id))))
+  (testing ":auto survives into the column description"
+    (s/create-table* :auto-demo [[:id :int :primary :key :auto] [:v :text]])
+    (is (:auto? (-> (s/table :auto-demo) :columns first)))))
 
 (deftest contradictory-column-test
   (testing "a primary key cannot be nullable"
