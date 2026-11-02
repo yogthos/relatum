@@ -49,8 +49,8 @@
     (if (keyword? binding)
       (case binding
         (:* :relatum.engine/*) (u/raise "Cannot use ::rel/* in select expressions yet, use :extend.")
-        #{binding})
-      (set binding))))
+        [binding])
+      (vec binding))))
 
 (defn extend-fn [extensions]
   (case (count extensions)
@@ -1128,6 +1128,16 @@
     [[:const [{}]]]
     relvar))
 
+(defn- selection-deps
+  "The projection keys of a :select, in written order: plain columns where
+  they stand and a computed binding's columns where it stands, first
+  occurrence only."
+  [selections]
+  (vec (distinct
+         (into []
+               (mapcat (fn [s] (if (vector? s) (extend-form-cols s) [s])))
+               selections))))
+
 (defn- save-view [graph self index view-fn]
   (let [sid (id self)
         [mget] (mem index)]
@@ -1494,9 +1504,8 @@
         :select
         (let [[_ & selections] head
               left (relvar-or-dual left)
-              cols (filterv keyword? selections)
               extensions (filterv vector? selections)
-              deps (into (vec (distinct cols)) (mapcat extend-form-cols) extensions)
+              deps (selection-deps selections)
               project (project-fn deps)]
           (if (seq extensions)
             (conj left (into [:extend] extensions) [transform project])
@@ -1505,9 +1514,8 @@
         :select-unsafe
         (let [[_ & selections] head
               left (relvar-or-dual left)
-              cols (filterv keyword? selections)
               extensions (filterv vector? selections)
-              deps (into (vec (distinct cols)) (mapcat extend-form-cols) extensions)
+              deps (selection-deps selections)
               project (project-fn deps)]
           (if (seq extensions)
             (add-implicit-joins #(conj left [transform-unsafe (comp project (extend-fn extensions))]))

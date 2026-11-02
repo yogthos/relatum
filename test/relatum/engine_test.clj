@@ -236,13 +236,33 @@
 ;; down. These pin the paths that used to scramble it.
 (deftest row-key-order-test
   (let [ks (mapv keyword (map #(str "k" %) (range 12)))
+        rks (vec (reverse ks))
         db (rel/transact {} {:S #{(into {} (map (fn [k] [k 1])) ks)}})]
     ;; select: selection order, not hash order
     (is (= [:k0 :k11 :k2]
            (keys (first (rel/q db [[:from :S] [:select :k0 :k11 :k2]])))))
+    ;; a wide plain select, written in scrambled order
+    (is (= rks
+           (keys (first (rel/q db [[:from :S] (apply vector :select rks)])))))
+    ;; computed selections keep their written position among the columns
+    (is (= [:k0 :x :k2]
+           (keys (first (rel/q db [[:from :S] [:select :k0 [:x [+ :k1 :k3]] :k2]])))))
+    ;; a wide multi-key computed binding keeps the binding's written order
+    (is (= rks
+           (keys (first (rel/q db [[:from :S]
+                                   [:select [rks [::rel/esc (into {} (map (fn [k] [k 1])) ks)]]]])))))
     ;; agg with no aggregates: group keys in written order
     (is (= (conj ks :n)
            (keys (first (rel/q db [[:from :S] [:agg ks [:n count]]])))))
+    ;; generic aggregation: group keys in written order, binding after
+    (is (= (conj ks :s)
+           (keys (first (rel/q db [[:from :S] [:agg ks [:s [rel/sum :k1]]]])))))
+    ;; group custom node (count-distinct): group keys, then the binding
+    (is (= (conj ks :ds)
+           (keys (first (rel/q db [[:from :S] [:agg ks [:ds [rel/count-distinct :k1]]]])))))
+    ;; sorted-group custom node (top-by): group keys, then the binding
+    (is (= (conj ks :top)
+           (keys (first (rel/q db [[:from :S] [:agg ks [:top [rel/top-by 2 :k1]]]])))))
     ;; agg grouping only (project through set): written order
     (is (= ks
            (keys (first (rel/q db [[:from :S] [:agg ks]])))))))

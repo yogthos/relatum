@@ -156,6 +156,10 @@
        (vec (keys (first (rel/q sale-db [[:from :sale] [:select :amt :dept]]))))
        [:amt :dept])
 
+(check "docs: computed selection keeps its written position"
+       (vec (keys (first (rel/q sale-db [[:from :sale] [:select :dept [:double [* :amt 2]] :amt]]))))
+       [:dept :double :amt])
+
 (check "xf and into"
        (rel/q (rel/transact {} [:insert :A {:a 1} {:a 2}])
               [[:from :A]] {:xf (map :a) :into []})
