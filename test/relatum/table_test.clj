@@ -71,6 +71,35 @@
       (is (some? (throws-data :check-violation
                    (rel/transact db [:insert :tfruit {:name "averylongname" :appearance "r" :cost 1 :grade 1}])))))))
 
+(deftest a-declared-check-is-enforced-by-the-engine
+  (s/create-table :rchk
+    [[:id :int :primary :key]
+     [:qty :int :check [< :qty 100]]])
+  (let [db (constrained-db :rchk)]
+    (is (nil? (throws-data :check-violation
+                 (rel/transact db [:insert :rchk {:id 1 :qty 5}]))))
+    (is (some? (throws-data :check-violation
+                 (rel/transact db [:insert :rchk {:id 2 :qty 500}]))))))
+
+(deftest a-false-check-is-enforced-by-the-engine
+  (s/create-table :rfalsechk
+    [[:id :int :primary :key]
+     [:qty :int :check false]])
+  (let [db (constrained-db :rfalsechk)]
+    (is (some? (throws-data :check-violation
+                 (rel/transact db [:insert :rfalsechk {:id 1 :qty 1}]))))))
+
+(deftest a-date-column-rejects-a-string-even-through-the-raw-engine
+  (s/create-table :rdate
+    [[:id :int :primary :key]
+     [:d :date]])
+  (let [db (constrained-db :rdate)]
+    (is (nil? (throws-data :check-violation
+                 (rel/transact db [:insert :rdate
+                                   {:id 1 :d (java.time.LocalDate/now)}]))))
+    (is (some? (throws-data :check-violation
+                 (rel/transact db [:insert :rdate {:id 2 :d "2026-01-01"}]))))))
+
 (deftest composite-key-test
   (s/create-table :line
     [[:order-id :int :primary :key]

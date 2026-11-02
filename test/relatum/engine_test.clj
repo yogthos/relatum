@@ -1491,5 +1491,75 @@
     (is (nil? (rel/q db [[:from :a]
                          [:where [= :x "x"] [= :y ""] [= :z "z"]]])))))
 
+;; Behaviors the ported relic suite does not cover: incremental group
+;; aggregates after deletes, query options in map form, single-expression
+;; sorts, env access, and a jolt-only set-literal throw in the lookup planner.
+(deftest a-materialized-count-distinct-survives-a-partial-delete
+  (let [q [[:from :A] [:agg [] [:n [rel/count-distinct :x]]]]
+        db (rel/mat (rel/transact {} [:insert :A {:id 1 :x "v"} {:id 2 :x "v"}]) q)]
+    (is (= [{:n 1}] (rel/q db q)))
+    (testing "deleting one of two rows sharing a value keeps the value"
+      (is (= [{:n 1}]
+             (rel/q (rel/transact db [:delete-exact :A {:id 1 :x "v"}]) q))))
+    (testing "deleting the last row holding a value drops it"
+      (is (= [{:n 0}]
+             (rel/q (rel/transact db [:delete-exact :A {:id 1 :x "v"}]
+                                            [:delete-exact :A {:id 2 :x "v"}]) q))))))
+
+(deftest a-materialized-count-distinct-keeps-distinct-values-apart
+  (let [q [[:from :A] [:agg [] [:n [rel/count-distinct :x]]]]
+        db (rel/mat (rel/transact {} [:insert :A {:id 1 :x "a"} {:id 2 :x "b"}]) q)]
+    (is (= [{:n 2}] (rel/q db q)))
+    (is (= [{:n 1}] (rel/q (rel/transact db [:delete-exact :A {:id 1 :x "a"}]) q)))))
+
+(deftest a-grouped-count-distinct-survives-a-partial-delete
+  (let [q [[:from :A] [:agg [:g] [:n [rel/count-distinct :x]]]]
+        db (rel/mat (rel/transact {} [:insert :A {:id 1 :g 1 :x "v"}]
+                                        [:insert :A {:id 2 :g 1 :x "v"}]) q)]
+    (is (= [{:g 1 :n 1}] (rel/q db q)))
+    (is (= [{:g 1 :n 1}]
+           (rel/q (rel/transact db [:delete-exact :A {:id 1 :g 1 :x "v"}]) q)))))
+
+(deftest a-materialized-set-concat-survives-a-partial-delete
+  (let [q [[:from :A] [:agg [] [:xs [rel/set-concat :x]]]]
+        db (rel/mat (rel/transact {} [:insert :A {:id 1 :x "v"} {:id 2 :x "v"}]) q)]
+    (is (= [{:xs #{"v"}}] (rel/q db q)))
+    (is (= [{:xs #{"v"}}]
+           (rel/q (rel/transact db [:delete-exact :A {:id 1 :x "v"}]) q)))
+    (is (= [{:xs #{}}]
+           (rel/q (rel/transact db [:delete-exact :A {:id 1 :x "v"}]
+                                          [:delete-exact :A {:id 2 :x "v"}]) q)))))
+
+(deftest a-range-lookup-through-a-unique-index-answers
+  ;; a jolt-only throw: the planner built a set literal from two identical
+  ;; values, which the JVM reader dedupes silently and jolt rejects
+  (let [db (-> {} (rel/mat [[:from :A] [:unique :a]])
+               (rel/transact [:insert :A {:a 1} {:a 2}]))]
+    (is (= [{:a 2}] (rel/q db [[:from :A] [:where [> :a 1]]])))
+    (is (= [{:a 1} {:a 2}] (rel/q db [[:from :A] [:where [>= :a 1]]])))))
+
+(deftest query-options-in-map-form-reach-the-query
+  (let [db (rel/transact {} [:insert :A {:a 1} {:a 2}])]
+    (is (= {::all [1 2]}
+           (rel/q db {::all {:q [[:from :A]] :into [] :xf (map :a)}})))
+    (is (= {::rows [{:a 1} {:a 2}]}
+           (rel/q db {::rows [[:from :A]]})))))
+
+(deftest a-single-expression-sort-accepts-a-bare-keyword
+  (let [db (rel/transact {} [:insert :A {:a 2} {:a 1}])]
+    (is (= [{:a 1} {:a 2}] (rel/q db [[:from :A]] {:sort :a})))
+    (is (= [{:a 2} {:a 1}] (rel/q db [[:from :A]] {:rsort :a})))))
+
+(deftest a-single-expression-sort-accepts-a-bare-function
+  (let [db (rel/transact {} [:insert :A {:a 2} {:a 1}])
+        by-a (fn [row] (:a row))]
+    (is (= [{:a 1} {:a 2}] (rel/q db [[:from :A]] {:sort by-a})))
+    (is (= [{:a 2} {:a 1}] (rel/q db [[:from :A]] {:rsort by-a})))))
+
+(deftest get-env-returns-the-environment-itself
+  (let [db (rel/with-env {} {:k 1})]
+    (is (= {:k 1} (rel/get-env db)))
+    (is (= {:k 2} (rel/get-env (rel/update-env db update :k inc))))))
+
 (comment
   (clojure.test/run-all-tests #"com\.wotbrew\.relic(.*)-test"))
