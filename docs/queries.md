@@ -201,14 +201,28 @@ index maps each key to a set of rows, nested one level per indexed column.
 ```
 
 The maps are the engine's own materialized indexes, kept current by every
-transaction, so reads never rebuild anything. The primary-key index is the
+transaction, so a read never rebuilds anything. The primary-key index is the
 same map the unique constraint already maintains — it costs nothing extra.
 Composite indexes and the per-foreign-key maps are additional materialized
 state: cheaper reads, proportionally more memory, and slightly slower
 writes — the same trade a database index makes.
 
+A column that is both unique and a reference keeps one index — the unique
+one. A reference to one column of a composite parent key still gets its
+hash index, since the key's unique index covers the tuple, not that column
+alone.
+
 An index name that was never declared or derived is rejected up front with
-`{:relatum/error :unknown-index}` and the list of known names.
+`{:relatum/error :unknown-index}` and the list of known names. Reading an
+index the db does not keep — one declared after the db was created — is
+rejected with `{:relatum/error :index-not-materialized}` rather than
+quietly rebuilding it: a rebuilt map would not be maintained and would go
+stale on the next transaction. Declare indexes before `create-db`, or
+install one later and thread the db it returns:
+
+```clojure
+(def db' (rc/ensure-index db :order/by-status))
+```
 
 ## The schema-aware surface
 

@@ -513,16 +513,32 @@
 (defn derived-indexes
   "The indexes a table's own declaration implies: a :unique index over the
   primary key, one per unique column that is not the key, and a :hash index
-  per foreign key column over its referencing column."
+  per foreign key column over its referencing column.
+
+  A column that is both unique and a reference keeps one index, the unique
+  one: it subsumes what the hash would maintain (one row per key), and two
+  descriptors under one name would leave the read shape undefined. A
+  reference to one column of a composite key still gets its hash index -
+  the key's unique index covers the tuple, not that column alone."
   [table]
-  (let [pk-set (set (:pk table))]
+  (let [pk (:pk table)
+        pk-set (set pk)
+        ;; columns whose single-column unique index a fk index would collide
+        ;; with: a one-column key, plus unique columns outside the key.
+        ;; Composite-key members are excluded - the key's unique index
+        ;; covers the tuple, not any one column, and primary key implies
+        ;; unique on each member, so unique? alone cannot decide this.
+        overshadowed (into (if (= 1 (count pk)) #{(first pk)} #{})
+                           (comp (filter :unique?) (map :name) (remove pk-set))
+                           (:columns table))]
     (into []
           (concat
-           (when (seq (:pk table)) [(index (:name table) (:pk table) :unique :pk)])
+           (when (seq pk) [(index (:name table) pk :unique :pk)])
            (for [c (:columns table)
-                 :when (and (:unique? c) (not (pk-set (:name c))))]
+                 :when (and (:unique? c) (not (contains? pk-set (:name c))))]
              (index (:name table) [(:name c)] :unique :unique))
-           (for [fk (:fks table)]
+           (for [fk (:fks table)
+                 :when (not (contains? overshadowed (:column fk)))]
              (index (:name table) [(:column fk)] :hash :fk))))))
 
 (defn build-index

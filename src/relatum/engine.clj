@@ -158,6 +158,13 @@
   [db & queries]
   (reduce dataflow/dematerialize db queries))
 
+(defn materialized?
+  "Whether the query's index is kept in this db, so index on it is a read.
+  Distinct from the query having rows: a materialized index over an empty
+  table is still materialized."
+  [db query]
+  (boolean (dataflow/materialized? db query)))
+
 (defn q
   "Queries the db, returns a seq of rows by default.
 

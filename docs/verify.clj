@@ -251,6 +251,8 @@
                          [:cust-id :int :references :vcust]
                          [:status :keyword]
                          [:created :int]])
+(s/create-table :vuniq-child [[:id :int :primary :key]
+                              [:pid :int :unique :references :vcust]])
 (s/create-index :vorder [:cust-id :status])
 (s/create-index :vorder [:created] :type :btree)
 
@@ -299,7 +301,38 @@
         #"Unknown index"
         (rc/index (rc/create-db) :vorder/by-nope))
 
+(check "a unique reference column reads as key to row"
+       (let [db (-> (rc/create-db)
+                    (rc/insert :vcust {:id 1 :name "ada"})
+                    (rc/insert :vuniq-child {:id 10 :pid 1}))]
+         (get-in (rc/index db :vuniq-child/by-pid) [1]))
+       {:id 10, :pid 1})
+
+(check "ensure-index installs a late-declared index and keeps it current"
+       (let [db (-> (rc/create-db)
+                    (rc/insert :vcust {:id 1 :name "ada"})
+                    (rc/insert-many :vorder [{:id 10 :cust-id 1 :status :shipped :created 500}
+                                             {:id 11 :cust-id 1 :status :open :created 1000}]))
+             _ (s/create-index :vorder [:status])
+             db' (rc/ensure-index db :vorder/by-status)]
+         [(count (get (rc/index db' :vorder/by-status) :shipped))
+          (count (get (rc/index (rc/insert db' :vorder
+                                           {:id 12 :cust-id 1 :status :shipped :created 1200})
+                                :vorder/by-status)
+                      :shipped))])
+       [1 2])
+
+(throws "reading an unkept index is rejected, not rebuilt"
+        #"not materialized"
+        ;; a hand-built db keeps no access indexes; the read must not
+        ;; quietly rebuild one
+        (let [db (-> {} (rc/table-constraints :vcust) (rc/table-constraints :vorder))]
+          (rc/index db :vorder/by-status)))
+
+(s/forget-index :vorder/by-status)
 (s/forget-index :vorder/by-cust-id+status)
+(s/forget-index :vorder/by-created)
+(s/forget :vuniq-child)
 (s/forget :vcust)
 (s/forget :vorder)
 

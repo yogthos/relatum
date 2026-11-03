@@ -471,6 +471,49 @@
     (let [t (:value (build-table {:name k :columns [[:a :int :nullable]]}))]
       (empty? (derived-indexes t)))))
 
+;; A name is the address of one index: if a column's own declaration claims
+;; it twice, the read shape would be undefined. Uniqueness subsumes what a
+;; hash would maintain, so the unique descriptor is the one that survives.
+
+(law a-derivation-never-repeats-a-name
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key]
+                                            [:pid :int :unique :references k]
+                                            [:ref :int :references k]]}))]
+      (= (map :name (derived-indexes t))
+         (distinct (map :name (derived-indexes t)))))))
+
+(law a-unique-column-that-is-also-a-reference-keeps-the-unique-index
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key]
+                                            [:pid :int :unique :references k]]}))]
+      (= [{:name (index-name k [:pid]) :table k :cols [:pid]
+           :type :unique :origin :unique}]
+         (filter #(= (index-name k [:pid]) (:name %)) (derived-indexes t))))))
+
+(law a-single-column-key-that-is-also-a-reference-keeps-one-unique-index
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:pid :int :primary :key :references k]
+                                            [:v :int]]}))]
+      (= [{:name (index-name k [:pid]) :table k :cols [:pid]
+           :type :unique :origin :pk}]
+         (derived-indexes t)))))
+
+(law a-reference-into-a-composite-key-keeps-its-hash-index
+  ;; the key's unique index covers the tuple, not the referenced column
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key]
+                                            [:k1 :int :primary :key :references k]
+                                            [:k2 :int :primary :key]]}))]
+      (boolean (some #(= {:name (index-name k [:k1]) :table k :cols [:k1]
+                          :type :hash :origin :fk}
+                         %)
+                     (derived-indexes t))))))
+
 ;; Declared indexes: same verdict discipline as the rest of the planner.
 
 (law a-declared-index-is-a-good-verdict-with-its-derived-name

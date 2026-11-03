@@ -45,15 +45,31 @@
   to row; :hash and :btree map each key to a set, nested one level per
   column. A name that was never declared or derived throws
   {:relatum/error :unknown-index}; an index that exists but holds nothing
-  reads as {}."
-  ([db name]
-   (let [idx (index-descriptor name)
-         q (plan/access-query idx)]
-     ;; mat is idempotent; this only builds when the index was declared
-     ;; after this db was created
-     (or (rel/index db q)
-         (let [db' (rel/mat db q)]
-           (or (rel/index db' q) {}))))))
+  reads as {}.
+
+  This is a read, never a hidden rebuild: an index this db does not keep
+  throws {:relatum/error :index-not-materialized}, because a map built on
+  the spot would not be maintained and would go stale on the next
+  transaction. create-db installs every declared index; for one declared
+  later, install it with ensure-index."
+  [db name]
+  (let [idx (index-descriptor name)
+        q (plan/access-query idx)]
+    (if (rel/materialized? db q)
+      (or (rel/index db q) {})
+      (throw (ex-info (str "Index " name " is not materialized in this db; "
+                           "create the db after declaring it, or install it with ensure-index")
+                      {:relatum/error :index-not-materialized
+                       :index name})))))
+
+(defn ensure-index
+  "Install an access index into db, returning the db that keeps it current.
+
+  Indexes declared before create-db are installed automatically; this is for
+  a declaration that came later, or a db built by hand. Idempotent: a db
+  that already keeps the index is returned unchanged."
+  [db name]
+  (rel/mat db (plan/access-query (index-descriptor name))))
 
 (defn- coerce [table-name row]
   (let [t (s/table table-name)]
@@ -82,7 +98,9 @@
 
 (defn- parent-pk-lookup
   "When a reference points at the parent's primary key, a [db value] -> row
-  lookup through the parent's pk index - a map lookup, never a scan. Nil when
+  lookup, never a scan of the parent table. Reads the parent's pk index
+  when this db keeps it, and falls back to a point query otherwise - the
+  plain index read would throw for a db that never installed it. Nil when
   the clause is compound or the parent declares no key, so the caller falls
   back to querying the parent table."
   [table clause catalog]
@@ -91,8 +109,12 @@
           pk (-> (get catalog table) :pk first)]
       (when (and (= parent-col pk)
                  (contains? (s/access-indexes) (plan/index-name table [pk])))
-        (let [idx-name (plan/index-name table [pk])]
-          (fn [db v] (get-in (index db idx-name) [v])))))))
+        (let [idx-name (plan/index-name table [pk])
+              q (plan/access-query (get (s/access-indexes) idx-name))]
+          (fn [db v]
+            (if (rel/materialized? db q)
+              (get-in (rel/index db q) [v])
+              (first (rel/q db [[:from table] [:where [= parent-col v]]])))))))))
 
 (defn- check-references
   "Throw when row names a parent that is not there.
