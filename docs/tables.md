@@ -82,8 +82,13 @@ silently dropping the reference.
 
 The registry is global per jolt process. If two namespaces declare `:person`
 differently, the last declaration wins, which is why the test suite uses
-distinct names everywhere. `create-db` installs constraints for every
-registered table, so declare before you build a database.
+distinct names everywhere. A sibling registry holds declared access indexes
+(`s/create-index`, `s/forget-index`, listed by `s/access-indexes`); primary
+keys, unique columns, and foreign keys derive theirs without a declaration.
+`create-db` installs the constraints and every access index for all
+registered tables, so declare tables and indexes first, or install late
+arrivals with `rc/table-constraints` / `rc/ensure-index`. `s/forget` drops a
+table's declared indexes with it.
 
 ## Introspection
 

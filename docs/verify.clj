@@ -244,6 +244,98 @@
                   [:insert :customer {:id 8 :name "grace"}]))
        {[[:from :customer]] {:added [{:id 8, :name "grace"}] :deleted []}})
 
+;; ---- queries.md: nested access -------------------------------------------
+
+(s/create-table :vcust [[:id :int :primary :key] [:name :text]])
+(s/create-table :vorder [[:id :int :primary :key]
+                         [:cust-id :int :references :vcust]
+                         [:status :keyword]
+                         [:created :int]])
+(s/create-table :vuniq-child [[:id :int :primary :key]
+                              [:pid :int :unique :references :vcust]])
+(s/create-index :vorder [:cust-id :status])
+(s/create-index :vorder [:created] :type :btree)
+
+(check "pk index reads as id to row"
+       (let [db (-> (rc/create-db)
+                    (rc/insert-many :vcust [{:id 1 :name "ada"} {:id 2 :name "bob"}]))]
+         (get-in (rc/index db :vcust/by-id) [2]))
+       {:id 2, :name "bob"})
+
+(check "fk index reads as id to rows"
+       (let [db (-> (rc/create-db)
+                    (rc/insert :vcust {:id 1 :name "ada"})
+                    (rc/insert-many :vorder [{:id 10 :cust-id 1 :status :shipped :created 500}
+                                             {:id 11 :cust-id 1 :status :open :created 1000}]))]
+         (count (get (rc/index db :vorder/by-cust-id) 1)))
+       2)
+
+(check "declared composite index reads as nested map"
+       (let [db (-> (rc/create-db)
+                    (rc/insert-many :vcust [{:id 1 :name "ada"} {:id 2 :name "bob"}])
+                    (rc/insert-many :vorder [{:id 10 :cust-id 1 :status :shipped :created 500}
+                                             {:id 11 :cust-id 1 :status :open :created 1000}
+                                             {:id 12 :cust-id 2 :status :shipped :created 1500}]))]
+         [(count (get-in (rc/index db :vorder/by-cust-id+status) [1 :shipped]))
+          (map :id (sort-by :id (take 2 (get (rc/index db :vorder/by-cust-id) 1))))])
+       [1 '(10 11)])
+
+(check "indexes follow the transaction"
+       (let [db (-> (rc/create-db)
+                    (rc/insert :vcust {:id 1 :name "ada"}))
+             db' (rc/insert db :vcust {:id 2 :name "bob"})]
+         [(count (rc/index db :vcust/by-id))
+          (count (rc/index db' :vcust/by-id))])
+       [1 2])
+
+(check "a btree index reads in range order"
+       (let [db (-> (rc/create-db)
+                    (rc/insert :vcust {:id 1 :name "ada"})
+                    (rc/insert-many :vorder [{:id 10 :cust-id 1 :status :shipped :created 500}
+                                             {:id 11 :cust-id 1 :status :open :created 1000}
+                                             {:id 12 :cust-id 1 :status :open :created 2000}]))]
+         (map :id (mapcat val (subseq (rc/index db :vorder/by-created) >= 1000))))
+       '(11 12))
+
+(throws "an unknown index name is rejected"
+        #"Unknown index"
+        (rc/index (rc/create-db) :vorder/by-nope))
+
+(check "a unique reference column reads as key to row"
+       (let [db (-> (rc/create-db)
+                    (rc/insert :vcust {:id 1 :name "ada"})
+                    (rc/insert :vuniq-child {:id 10 :pid 1}))]
+         (get-in (rc/index db :vuniq-child/by-pid) [1]))
+       {:id 10, :pid 1})
+
+(check "ensure-index installs a late-declared index and keeps it current"
+       (let [db (-> (rc/create-db)
+                    (rc/insert :vcust {:id 1 :name "ada"})
+                    (rc/insert-many :vorder [{:id 10 :cust-id 1 :status :shipped :created 500}
+                                             {:id 11 :cust-id 1 :status :open :created 1000}]))
+             _ (s/create-index :vorder [:status])
+             db' (rc/ensure-index db :vorder/by-status)]
+         [(count (get (rc/index db' :vorder/by-status) :shipped))
+          (count (get (rc/index (rc/insert db' :vorder
+                                           {:id 12 :cust-id 1 :status :shipped :created 1200})
+                                :vorder/by-status)
+                      :shipped))])
+       [1 2])
+
+(throws "reading an unkept index is rejected, not rebuilt"
+        #"not materialized"
+        ;; a hand-built db keeps no access indexes; the read must not
+        ;; quietly rebuild one
+        (let [db (-> {} (rc/table-constraints :vcust) (rc/table-constraints :vorder))]
+          (rc/index db :vorder/by-status)))
+
+(s/forget-index :vorder/by-status)
+(s/forget-index :vorder/by-cust-id+status)
+(s/forget-index :vorder/by-created)
+(s/forget :vuniq-child)
+(s/forget :vcust)
+(s/forget :vorder)
+
 ;; ---- writing-data.md ----------------------------------------------------
 
 (check "insert validates and defaults"
@@ -396,6 +488,10 @@
 (check "readme: where equality"
        (rc/q rmdb [[:from :rmperson] [:where [= :name "Ada"]]])
        '({:id 1, :name "Ada", :balance 100.0}))
+
+(check "readme: nested access reads as a nested map"
+       (get-in (rc/index rmdb :rmperson/by-id) [1])
+       {:id 1, :name "Ada", :balance 100.0})
 
 (check "readme: where then select"
        (set (rc/q rmdb [[:from :rmperson]

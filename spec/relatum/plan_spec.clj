@@ -36,6 +36,11 @@
 (ann render [Any -> (Opt String)])
 ;; public so the inserting edge can build the same clause the constraint does
 (ann resolve-reference [Any Any Any -> (Map Keyword Any)])
+;; access indexes
+(ann index-name [Keyword (List Keyword) -> Keyword])
+(ann derived-indexes [Any -> Any])
+(ann build-index [Any Any (Map Keyword Any) -> Any])
+(ann access-query [Any -> Any])
 
 ;; --- a verdict is always a verdict ----------------------------------------
 ;; Every entry point answers with the same shape, so a caller can branch on
@@ -407,3 +412,161 @@
                                             [:b :int :nullable]]}))
           ops (:value (constraints t {}))]
       (not-any? (fn [op] (= :req (first op))) ops))))
+
+;; --- access indexes -------------------------------------------------------
+;; The name is the address of an index: it is derived from the table and
+;; columns alone, so two callers asking for the same shape get the same map.
+
+(law a-name-is-derived-from-table-and-columns
+  (forall [k Keyword]
+    (= (keyword (str (name k) "/by-a+id")) (index-name k [:a :id]))))
+
+(law a-namespaced-table-keeps-its-namespace
+  (forall [k Keyword]
+    (= (keyword (str "dom/" (name k) "/by-a"))
+       (index-name (keyword (str "dom/" (name k))) [:a]))))
+
+(law a-single-column-name-has-no-joiner
+  (forall [k Keyword]
+    (= (keyword (str (name k) "/by-a")) (index-name k [:a]))))
+
+;; Derived indexes: the declaration alone decides them, so the reads a schema
+;; promises never depend on someone remembering to declare anything.
+
+(law a-primary-key-derives-exactly-one-unique-index
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key] [:a :text]]}))]
+      (= [{:name (index-name k [:id]) :table k :cols [:id] :type :unique :origin :pk}]
+         (derived-indexes t)))))
+
+(law a-unique-column-that-is-not-the-key-derives-its-own
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key]
+                                            [:email :text :unique]]}))]
+      (= {:pk 1 :unique 1}
+         (frequencies (map :origin (derived-indexes t)))))))
+
+(law a-foreign-key-derives-a-hash-index-on-its-column
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key]
+                                            [:pid :int :references k]]}))]
+      (boolean (some #(= {:name (index-name k [:pid]) :table k :cols [:pid]
+                          :type :hash :origin :fk}
+                         %)
+                     (derived-indexes t))))))
+
+(law a-composite-key-derives-one-index-over-the-tuple
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:a :int :primary :key]
+                                            [:b :int :primary :key]]}))]
+      (= [(index-name k [:a :b])]
+         (map :name (derived-indexes t))))))
+
+(law a-table-without-keys-or-references-derives-nothing
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k :columns [[:a :int :nullable]]}))]
+      (empty? (derived-indexes t)))))
+
+;; A name is the address of one index: if a column's own declaration claims
+;; it twice, the read shape would be undefined. Uniqueness subsumes what a
+;; hash would maintain, so the unique descriptor is the one that survives.
+
+(law a-derivation-never-repeats-a-name
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key]
+                                            [:pid :int :unique :references k]
+                                            [:ref :int :references k]]}))]
+      (= (map :name (derived-indexes t))
+         (distinct (map :name (derived-indexes t)))))))
+
+(law a-unique-column-that-is-also-a-reference-keeps-the-unique-index
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key]
+                                            [:pid :int :unique :references k]]}))]
+      (= [{:name (index-name k [:pid]) :table k :cols [:pid]
+           :type :unique :origin :unique}]
+         (filter #(= (index-name k [:pid]) (:name %)) (derived-indexes t))))))
+
+(law a-single-column-key-that-is-also-a-reference-keeps-one-unique-index
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:pid :int :primary :key :references k]
+                                            [:v :int]]}))]
+      (= [{:name (index-name k [:pid]) :table k :cols [:pid]
+           :type :unique :origin :pk}]
+         (derived-indexes t)))))
+
+(law a-reference-into-a-composite-key-keeps-its-hash-index
+  ;; the key's unique index covers the tuple, not the referenced column
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key]
+                                            [:k1 :int :primary :key :references k]
+                                            [:k2 :int :primary :key]]}))]
+      (boolean (some #(= {:name (index-name k [:k1]) :table k :cols [:k1]
+                          :type :hash :origin :fk}
+                         %)
+                     (derived-indexes t))))))
+
+;; Declared indexes: same verdict discipline as the rest of the planner.
+
+(law a-declared-index-is-a-good-verdict-with-its-derived-name
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:a :int] [:b :int]]}))
+          v (build-index t [:a :b] {})]
+      (and (ok? v)
+           (= {:name (index-name k [:a :b]) :table k :cols [:a :b]
+               :type :hash :origin :declared}
+              (:value v))))))
+
+(law a-declared-btree-index-keeps-its-type
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k :columns [[:a :int]]}))]
+      (= :btree (:type (:value (build-index t [:a] {:type :btree})))))))
+
+(law a-declared-index-over-an-unknown-column-is-rejected
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k :columns [[:a :int]]}))
+          ;; prefixed, so it can never be the table's one real column
+          missing (keyword (str "x" (name k)))]
+      (and (not (ok? (build-index t [missing] {})))
+           (= :unknown-column (:error (build-index t [missing] {})))))))
+
+(law a-declared-index-over-repeated-columns-is-rejected
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k :columns [[:a :int]]}))]
+      (= :duplicate-column (:error (build-index t [:a :a] {}))))))
+
+(law a-declared-index-without-columns-is-rejected
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k :columns [[:a :int]]}))]
+      (= :bad-index (:error (build-index t [] {}))))))
+
+(law a-declared-index-cannot-shadow-a-derived-name
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key]
+                                            [:a :int]]}))]
+      (= :index-name-conflict (:error (build-index t [:id] {}))))))
+
+(law a-declared-index-type-must-be-known
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k :columns [[:a :int]]}))]
+      (= :unknown-index-type (:error (build-index t [:a] {:type :gin}))))))
+
+(law an-index-descriptor-compiles-to-its-relvar-query
+  (forall [k Keyword]
+    (= [[:from k] [:hash :a]]
+       (access-query {:table k :cols [:a] :type :hash}))))
+
+(law a-unique-index-descriptor-compiles-to-a-unique-query
+  (forall [k Keyword]
+    (= [[:from k] [:unique :id]]
+       (access-query {:table k :cols [:id] :type :unique}))))

@@ -169,6 +169,61 @@ can't exfiltrate data through them.
              [:insert :customer {:id 8 :name "grace"}])
 ```
 
+## Nested access
+
+A query answers a question, but when the access path is known up front you
+can read the database like a nested map instead, with a cost you can see:
+every hop is a map lookup, so nothing scans a table and there is no plan to
+ask about.
+
+For a declared table, the primary key, unique columns, and foreign keys each
+maintain a nested map incrementally under a name derived from the
+declaration — `:customer/by-id`, `:order/by-cust-id`, or
+`:order/by-cust-id+status` for a composite you declare yourself:
+
+```clojure
+(require '[relatum.core :as rc])
+
+(s/create-index :order [:cust-id :status])
+
+(get-in (rc/index db :customer/by-id) [42])          ;; the row, or nil
+(get (rc/index db :order/by-cust-id) 42)             ;; #{order ...}
+(take 10 (get-in (rc/index db :order/by-cust-id+status) [42 :shipped]))
+```
+
+`rc/index` returns the plain nested map; after that one call it is ordinary
+Clojure data. A `:unique` index maps key to row, a `:hash` or `:btree`
+index maps each key to a set of rows, nested one level per indexed column.
+`:btree` sorts each level, so range reads work:
+
+```clojure
+(subseq (rc/index db :order/by-created) >= 1000)
+```
+
+The maps are the engine's own materialized indexes, kept current by every
+transaction, so a read never rebuilds anything. The primary-key index is the
+same map the unique constraint already maintains — it costs nothing extra.
+Composite indexes and the per-foreign-key maps are additional materialized
+state: cheaper reads, proportionally more memory, and slightly slower
+writes — the same trade a database index makes.
+
+A column that is both unique and a reference keeps one index — the unique
+one. A reference to one column of a composite parent key still gets its
+hash index, since the key's unique index covers the tuple, not that column
+alone.
+
+An index name that was never declared or derived is rejected up front with
+`{:relatum/error :unknown-index}` and the list of known names. Reading an
+index the db does not keep — one declared after the db was created — is
+rejected with `{:relatum/error :index-not-materialized}` rather than
+quietly rebuilding it: a rebuilt map would not be maintained and would go
+stale on the next transaction. Declare indexes before `create-db`, or
+install one later and thread the db it returns:
+
+```clojure
+(def db' (rc/ensure-index db :order/by-status))
+```
+
 ## The schema-aware surface
 
 `relatum.query` is a thin single-arity wrapper over the same engine, which

@@ -7,7 +7,8 @@ a plain immutable map.
 
 - [Tables](tables.md) — declaring tables, column attributes, the registry
 - [Types](types.md) — the type vocabulary and how values are coerced
-- [Queries](queries.md) — the query language, expressions, aggregation
+- [Queries](queries.md) — the query language, expressions, aggregation,
+  nested access
 - [Writing data](writing-data.md) — inserts, updates, deletes, transactions
 - [Constraints](constraints.md) — what a declaration enforces, foreign keys,
   cascade deletes, error shapes
