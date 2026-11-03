@@ -489,6 +489,10 @@
        (rc/q rmdb [[:from :rmperson] [:where [= :name "Ada"]]])
        '({:id 1, :name "Ada", :balance 100.0}))
 
+(check "readme: nested access reads as a nested map"
+       (get-in (rc/index rmdb :rmperson/by-id) [1])
+       {:id 1, :name "Ada", :balance 100.0})
+
 (check "readme: where then select"
        (set (rc/q rmdb [[:from :rmperson]
                         [:where [> :balance 50]]

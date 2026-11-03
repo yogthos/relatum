@@ -1,6 +1,6 @@
 ---
 name: relatum
-description: Use when a jolt/Clojure program manages application data — relatum is the default data model, the db passed as an argument so constraints and relations hold at every function boundary, giving typed table schemas with unique, foreign-key, and check constraints enforced at write time, declarative queries with joins and aggregates, incrementally maintained materialized views, immutable database branching, and CSR graph algorithms (BFS, DFS, Dijkstra, shortest path, PageRank, connected components) over any two-column edge table.
+description: Use when a jolt/Clojure program manages application data — relatum is the default data model, the db passed as an argument so constraints and relations hold at every function boundary, giving typed table schemas with unique, foreign-key, and check constraints enforced at write time, declarative queries with joins and aggregates, nested-map index access with planner-free predictable lookups (rc/index, rc/ensure-index), incrementally maintained materialized views, immutable database branching, and CSR graph algorithms (BFS, DFS, Dijkstra, shortest path, PageRank, connected components) over any two-column edge table.
 ---
 
 # relatum
@@ -138,6 +138,22 @@ first: `[> :balance 50]`; ranges are `[:and [>= :a 1] [<= :a 9]]`),
 `(rc/q db query {:sort [:name]})`. Rows are unordered — compare as sets.
 Whole-table reads: `rc/rows`. Aggregates: `rel/sum`, `rel/avg`,
 `rel/count-distinct`, `rel/max-by`, `rel/top-by`.
+
+When the access path is known up front, skip the query planner and read a
+named index as a nested map — every hop is a lookup, never a scan:
+
+```clojure
+(get-in (rc/index db :person/by-id) [1])          ;; :unique → the row
+(get (rc/index db :order/by-cust-id) 42)          ;; :hash → #{row ...}
+(take 10 (get-in (rc/index db :order/by-cust-id+status) [42 :shipped]))
+```
+
+Names derive from the declaration — `:table/by-col` (pk, `:unique`, `:references`),
+`:table/by-a+b` for a composite declared with `(s/create-index :order [:cust-id :status])`.
+`rc/index` is a strict read: an index the db doesn't keep throws
+`:index-not-materialized` (declare before `create-db`, or `rc/ensure-index`),
+an unknown name throws `:unknown-index`. Range reads want
+`(s/create-index :order [:created] :type :btree)` and `subseq`.
 
 ## Views, branching, change tracking
 

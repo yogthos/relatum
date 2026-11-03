@@ -62,6 +62,25 @@ Joins, the remaining aggregates (`rel/sum`, `rel/avg`, ...), sorting, and
 sub-selects are the same query language with `relatum.engine` aliased —
 [docs/queries.md](docs/queries.md) covers them.
 
+## Nested access
+
+When the access path is known up front, read the database like a nested map
+instead of querying: every declared table's primary key, unique columns, and
+foreign keys maintain a nested map under a derived name, kept current by each
+transaction:
+
+```clojure
+(get-in (rc/index db :person/by-id) [1])
+;; => {:id 1, :name "Ada", :balance 100.0}
+```
+
+Composites are declared (`(s/create-index :order [:cust-id :status])` →
+`:order/by-cust-id+status`), and every hop of a read is a map lookup — never
+a table scan, never a plan to consult. A read is strict: an index the db
+does not keep throws rather than silently rebuilding it, so declare indexes
+before `create-db` or install them with `rc/ensure-index`. Details in
+[docs/queries.md](docs/queries.md).
+
 ## Graphs
 
 Any table (or query result) whose rows carry two related columns becomes a

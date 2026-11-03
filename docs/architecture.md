@@ -36,13 +36,19 @@ verdicts into exceptions or engine ops.
 - `relatum.type` — the type vocabulary. `parse-type`, `validate`,
   `conforms?`. Pure, throw-free, law-checked by writ.
 - `relatum.plan` — DDL planning. A declaration goes in, a validated table
-  description and its constraint ops come out, both as verdict maps. Pure.
-- `relatum.schema` — the edge around plan. The global table registry, the
-  ex-info policy, the `create-table` macro, coercion call sites.
+  description and its constraint ops come out, both as verdict maps. It also
+  derives the access indexes a declaration implies (primary key, uniques,
+  foreign keys — unique wins where a column is both unique and a reference)
+  and validates declared composites. Pure.
+- `relatum.schema` — the edge around plan. The global table and index
+  registries, the ex-info policy, the `create-table` macro, coercion call
+  sites.
 - `relatum.integrity` — foreign-key decisions as pure functions over plain
   rows: `has-parent?`, `fk-verdict`, `check`, `check-verdict`.
 - `relatum.core` — the agent-facing insert path. `insert` coerces, pre-checks
-  references, then transacts.
+  references (through the parent's pk index when the db keeps one), then
+  transacts. Also serves nested access: `index` reads a named nested map
+  strictly, `ensure-index` installs one declared after the db was built.
 - `relatum.query` — a single-arity `rows`/`insert` over the engine. It exists
   because writ's `ann` rejects multi-arity fns and the engine's `q` and
   `transact` are variadic, so a signature could not be given to them
