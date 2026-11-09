@@ -1369,9 +1369,15 @@
                                 identity)
                               #(some-> % vector))
                         card (count const-exprs)
-                        st (fn [test]
+                        st (fn [test core-test]
+                            ;; subseq picks its direction by identity with
+                            ;; clojure.core's > and >=, and applies the test to
+                            ;; the map comparator's result against 0, so a btree
+                            ;; walk takes the core function: given the engine's
+                            ;; own >= it scanned from the start and stopped at the
+                            ;; first key below the bound, returning nothing
                             (let [subseq-fn (if (= :btree itype)
-                                                subseq
+                                                #(subseq %1 core-test %3)
                                                 hash-index-range-iterable)
                                     e (first const-exprs)
                                     vxf (mapcat (comp nxt val))]
@@ -1392,13 +1398,13 @@
                                  {:xf (mapcat (fn [m] (nxt (m e))))})
                              {:xf (mapcat (fn [m] (eduction (mapcat (comp nxt m)) const-exprs)))})
                         :< (case card
-                             1 (st e/<))
+                             1 (st e/< <))
                         :> (case card
-                             1 (st e/>))
+                             1 (st e/> >))
                         :>= (case card
-                              1 (st e/>=))
+                              1 (st e/>= >=))
                         :<= (case card
-                              1 (st e/<=)))
+                              1 (st e/<= <=)))
                       (assoc v i))))
                 v
                 m))
