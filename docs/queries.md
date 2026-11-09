@@ -117,9 +117,10 @@ are functions in `relatum.engine` that build one:
 
 ## Options map
 
-`q` takes a third argument: `{:sort :rsort :xf :into}`.
+`q` (both `rc/q` and `rel/q`) takes a third argument: `{:sort :rsort :xf :into}`.
 
 ```clojure
+(rc/q db [[:from :person]] {:sort [:name]})
 (rel/q db [[:from :person]] {:sort [:balance]})
 (rel/q db [[:from :person]] {:rsort [:balance]})   ;; descending
 (rel/q db [[:from :person]] {:xf (map :name) :into []})
@@ -222,6 +223,16 @@ install one later and thread the db it returns:
 
 ```clojure
 (def db' (rc/ensure-index db :order/by-status))
+```
+
+### Children in order
+
+A `:btree` index on a parent key and a position reads a parent's children in
+position order; `rc/children` flattens it:
+
+```clojure
+(s/create-index :pet [:owner-id :position] :type :btree)
+(rc/children db :pet/by-owner-id+position 1)   ;; owner 1's pets, by position
 ```
 
 ## The schema-aware surface

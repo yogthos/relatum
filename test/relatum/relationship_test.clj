@@ -73,19 +73,26 @@
 (deftest unknown-referenced-table-test
   (s/create-table :ychild [[:id :int :primary :key]
                            [:x :int :references :nope]])
-  (is (= :unknown-references
-         (:relatum/error (err #(s/ddl->constraints (s/table :ychild)))))))
+  ;; an invalid declaration left registered would break every later create-db
+  (try
+    (is (= :unknown-references
+           (:relatum/error (err #(s/ddl->constraints (s/table :ychild))))))
+    (finally (s/forget :ychild))))
 
 (deftest composite-parent-needs-explicit-column-test
   (s/create-table :zparent [[:a :int :primary :key] [:b :int :primary :key]])
   (s/create-table :zchild [[:id :int :primary :key]
                            [:za :int :references :zparent]])
-  (is (= :ambiguous-references
-         (:relatum/error (err #(s/ddl->constraints (s/table :zchild)))))))
+  (try
+    (is (= :ambiguous-references
+           (:relatum/error (err #(s/ddl->constraints (s/table :zchild))))))
+    (finally (s/forget :zchild))))
 
 (deftest fk-type-mismatch-test
   (s/create-table :wparent [[:id :int :primary :key]])
   (s/create-table :wchild [[:id :int :primary :key]
                            [:pid :text :references :wparent]])
-  (is (= :fk-type-mismatch
-         (:relatum/error (err #(s/ddl->constraints (s/table :wchild)))))))
+  (try
+    (is (= :fk-type-mismatch
+           (:relatum/error (err #(s/ddl->constraints (s/table :wchild))))))
+    (finally (s/forget :wchild))))

@@ -51,11 +51,12 @@ Several rows at once:
 
 ## Updating
 
-`rc/update` takes a where-expression and a function of the old row. It is
-read, then delete and re-insert, so the new row shape is validated against
-the schema too:
+`rc/update` takes a where-expression and a function of the old row, plus any
+extra arguments for it, like `clojure.core/update`. It is read, then delete
+and re-insert, so the new row shape is validated against the schema too:
 
 ```clojure
+(def db (rc/update db :person [= :id 1] assoc :balance 10.0))
 (def db (rc/update db :person [= :id 1] (fn [row] (assoc row :balance 10.0))))
 ```
 
@@ -71,12 +72,32 @@ the database untouched.
 ## Deleting
 
 ```clojure
+(rc/delete db :person [= :id 1])            ;; the rows matching the expression
+(rc/delete db :person [< :balance 0] [= :name "x"])   ;; every expression must hold
 (rc/delete db :person)                      ;; every row of the table
 ```
 
 With foreign keys declared `:on-delete :cascade`, deleting a parent's rows
-this way takes the children with it. For deleting selected rows, use the
-engine's transaction commands below.
+takes the children with it.
+
+## Keys
+
+An `:auto` integer primary key is filled in when a row leaves it out, and
+`rc/row` reads one row by its key (a vector for a composite key), from the
+key's index:
+
+```clojure
+(rc/next-id db :person)                     ;; the key the next insert assigns
+(rc/row db :person 1)                       ;; the row, or nil
+```
+
+## Errors
+
+Every rejection from `rc/insert`, `rc/update` and `rc/delete` carries
+`:relatum/error` in its ex-data: schema rejections (`:bad-type`,
+`:required`, `:foreign-key-violation`, ...) and engine ones
+(`:unique-key-violation`, `:check-violation`) alike. Engine rejections keep
+their `:relatum.engine/error` key and the engine's exception as the cause.
 
 ## The engine underneath
 

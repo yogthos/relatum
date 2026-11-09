@@ -120,8 +120,10 @@ path, since `rc/delete` goes through the engine.
 ## Error keywords
 
 The schema layer puts `:relatum/error` in ex-data. The engine uses
-`:relatum.engine/error`. A caller walking an exception's cause chain sees
-whichever layer threw.
+`:relatum.engine/error`; when an engine rejection comes out of `rc/insert`,
+`rc/update` or `rc/delete` it also carries `:relatum/error` (same value), so
+callers of the validating surface read one key. Calling `rel/transact`
+directly gives you the engine's key only.
 
 From the schema layer:
 
