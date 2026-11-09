@@ -172,11 +172,13 @@
         (comp (filter (fn [[_ n]] (> n 1))) (map key))
         (frequencies (map :name columns))))
 
-(defn- table-from [name columns]
+(defn- table-from [name columns unique-sets]
   {:name name
    :columns columns
    :pk (mapv :name (filter :primary? columns))
    :uniques (mapv :name (filter :unique? columns))
+   ;; combinations unique as a tuple: create-table's :unique option
+   :unique-sets (vec unique-sets)
    :checks (into [] (keep (fn [c] (when (some? (:check c)) [(:name c) (:check c)])))
                  columns)
    :fks (into [] (keep (fn [c] (when (:references c)
@@ -185,15 +187,45 @@
                                   :on-delete (:on-delete c)})))
               columns)})
 
+(defn- check-unique-sets
+  "Validate create-table's :unique option against the parsed columns: a
+  vector of column vectors, each naming known columns once. A verdict
+  carrying the sets."
+  [table sets columns]
+  (let [known (set (map :name columns))]
+    (cond
+      (nil? sets) (succeed [])
+      (not (and (vector? sets) (every? vector? sets) (every? seq sets)))
+      (fail :bad-unique
+            ":unique takes a vector of column vectors, e.g. [[:doc-id :position]]"
+            {:table table :unique sets})
+      :else
+      (or (some (fn [cols]
+                  (let [unknown (into [] (remove known) cols)
+                        dupes (into [] (comp (filter (fn [[_ n]] (> n 1))) (map key)) (frequencies cols))]
+                    (cond
+                      (seq unknown)
+                      (fail :unknown-column
+                            (str "Unknown column(s) " (pr-str unknown) " in :unique of " table)
+                            {:table table :columns unknown :known (vec (map :name columns))})
+                      (seq dupes)
+                      (fail :duplicate-column
+                            (str "Duplicate column(s) " (pr-str dupes) " in :unique of " table)
+                            {:table table :columns dupes}))))
+                sets)
+          (succeed sets)))))
+
 (defn build-table
   "Validate a declaration into a table description, as a verdict.
 
-  A declaration is {:name :person :columns [col ...]} - the shape an agent
-  sends as data, and exactly what create-table's source is read into.
+  A declaration is {:name :person :columns [col ...] :unique [[col ...] ...]}
+  - the shape an agent sends as data, and exactly what create-table's source
+  is read into. :unique (optional) lists combinations of columns that must be
+  unique as a tuple.
 
   Rejects a non-keyword table name, a declaration whose columns are not a
-  vector of column vectors, any column that does not parse, and repeated
-  column names."
+  vector of column vectors, any column that does not parse, repeated column
+  names, and a malformed :unique."
   [declaration]
   (let [name (:name declaration)
         cols (:columns declaration)]
@@ -217,7 +249,10 @@
               (fail :duplicate-column
                     (str "Duplicate column(s) " (pr-str dupes) " in table " name)
                     {:table name :columns dupes})
-              (succeed (table-from name columns)))))))))
+              (let [sets (check-unique-sets name (:unique declaration) columns)]
+                (if (ok? sets)
+                  (succeed (table-from name columns (:value sets)))
+                  sets)))))))))
 
 (defn column
   "A table's column description, or nil."
@@ -418,7 +453,10 @@
        [:unique (:name c)])
      ;; a composite key is unique as a tuple, not column by column
      (when (= 1 (count pk)) [[:unique (first pk)]])
-     (when (> (count pk) 1) [(into [:unique] pk)]))))
+     (when (> (count pk) 1) [(into [:unique] pk)])
+     ;; declared combinations, likewise as tuples (the key's own set is covered)
+     (for [cols (:unique-sets table) :when (not= (set cols) pk-set)]
+       (into [:unique] cols)))))
 
 (defn constraints
   "Translate a table description into relvar constraint operations the engine
@@ -464,7 +502,8 @@
                           (:on c) (assoc :references-column (:on c))
                           (:on-delete c) (assoc :on-delete (:on-delete c)))))
                     (:columns table))
-     :references (:fks table)}))
+     :references (:fks table)
+     :unique (:unique-sets table)}))
 
 (defn- ddl-attributes [c]
   (cond-> []
@@ -487,7 +526,10 @@
   [table]
   (when table
     (str "(create-table " (pr-str (:name table)) "\n   ["
-         (str/join "\n    " (map ddl-column (:columns table))) "])")))
+         (str/join "\n    " (map ddl-column (:columns table))) "]"
+         (when (seq (:unique-sets table))
+           (str "\n  :unique " (pr-str (:unique-sets table))))
+         ")")))
 
 ;; ---------------------------------------------------------------------------
 ;; access indexes

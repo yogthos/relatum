@@ -93,6 +93,11 @@ key), `:required`/`:not-null`, `:nullable`, `:unique`, `:default v`,
 Without `:nullable`, every column is required. `:default` fills an absent
 column. `:auto` on a single integer primary key fills it on insert when the row
 leaves it out (max + 1); `rc/next-id` tells you that id up front.
+Uniqueness over a combination of columns (SQL's `UNIQUE (a, b)`) goes after
+the columns: `(s/create-table :layer [...] :unique [[:doc-id :position]])` —
+declare it whenever two columns together identify a row (an ordered child list,
+a membership), so a write that breaks it rejects at once instead of surfacing
+later as duplicated data. Unknown options are rejected, not ignored.
 `create-table` is a macro; `create-table*` takes the same data at runtime.
 
 ```clojure

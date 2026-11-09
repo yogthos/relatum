@@ -131,6 +131,7 @@ From the schema layer:
   `:unknown-attribute`, `:missing-attribute-value`, `:unknown-on-column`
 - `:bad-table-name`, `:bad-table`, `:bad-column`, `:bad-column-name`
 - `:duplicate-column`, `:nullable-primary-key`
+- `:bad-unique`, `:unknown-table-option` (create-table's options)
 - `:required`, `:bad-type`, `:too-long`
 - `:unknown-references`, `:ambiguous-references`, `:fk-type-mismatch`
 - `:foreign-key-violation`

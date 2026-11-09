@@ -73,6 +73,30 @@ Attributes that take a value (`:default`, `:check`, `:references`, `:on`,
 `[:pid :int :references]` rejects with `:missing-attribute-value` rather than
 silently dropping the reference.
 
+## Uniqueness across columns
+
+`:unique` on a column covers that column alone. A rule over a combination,
+like SQL's table-level `UNIQUE (doc_id, position)`, goes after the columns:
+
+```clojure
+(s/create-table :layer
+  [[:id       :int :primary :key :auto]
+   [:doc-id   :int :references :doc :on-delete :cascade]
+   [:position :int]]
+  :unique [[:doc-id :position]])
+```
+
+Each inner vector is one combination that must be unique as a tuple (each
+column may still repeat on its own). A write that repeats one rejects with
+`:unique-key-violation`; an `rc/update` that shifts or swaps values is one
+transaction, so it succeeds whenever its end state is valid. A malformed
+`:unique` rejects with `:bad-unique`, an unknown column with
+`:unknown-column`, and an option `create-table` doesn't know with
+`:unknown-table-option` rather than being ignored.
+
+The rule doesn't derive an access index; declare one over the same columns if
+you read through them, a `:btree` for order (see `rc/children`).
+
 ## The registry
 
 ```clojure
