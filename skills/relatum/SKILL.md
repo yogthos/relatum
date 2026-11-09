@@ -53,8 +53,9 @@ relatum gives you, over the same plain-map rows:
 - **Write-time shape enforcement.** Type, requiredness, and length violations
   reject with structured ex-data (`:relatum/error`, `:column`, `:reason`)
   before any write lands. A rejected insert leaves the database untouched.
-- **Uniqueness and set semantics by index.** `:primary :key` and `:unique`
-  are backed by materialized indexes; duplicate inserts are rejected (or
+- **Uniqueness and set semantics by index.** `:primary :key`, `:unique` and
+  `:unique [[a b]]` combinations are backed by materialized indexes;
+  duplicate inserts are rejected (or
   handled declaratively by `:insert-or-replace`, `:insert-or-merge`,
   `:insert-ignore` via the engine).
 - **Referential integrity.** `:references` rejects a child whose parent is
@@ -99,6 +100,22 @@ declare it whenever two columns together identify a row (an ordered child list,
 a membership), so a write that breaks it rejects at once instead of surfacing
 later as duplicated data. Unknown options are rejected, not ignored.
 `create-table` is a macro; `create-table*` takes the same data at runtime.
+
+An ordered child list, the common case for a combination rule — unique
+positions per parent, read back in order:
+
+```clojure
+(s/create-table :layer
+  [[:id       :int :primary :key :auto]
+   [:doc-id   :int :references :doc :on-delete :cascade]
+   [:position :int]]
+  :unique [[:doc-id :position]])
+(s/create-index :layer [:doc-id :position] :type :btree)
+
+(rc/children db :layer/by-doc-id+position doc-id)   ; the doc's layers, in order
+;; make room at position p: one update, valid because its end state is
+(rc/update db :layer [:and [= :doc-id doc-id] [>= :position p]] update :position inc)
+```
 
 ```clojure
 (s/create-table* :order
@@ -203,10 +220,12 @@ over a snapshot; rebuild after writes.
 ## Engine layer
 
 `rc/*` is the validating surface; `relatum.engine` (`rel/q`, `rel/transact`,
-`rel/mat`) is the raw ported relic engine. Use `rel/transact` for bulk or
-predicate operations where per-row validation isn't needed. All modifications
-must go through these — state lives in metadata, so associng the db map
-directly corrupts it.
+`rel/mat`) is the raw ported relic engine. Predicate updates and deletes have
+validating forms (`rc/update`, `rc/delete` with a where); reach for
+`rel/transact` for bulk loads where per-row validation isn't needed, or for
+the `:insert-or-*` commands. Its rejections carry only
+`:relatum.engine/error`. All modifications must go through these — state
+lives in metadata, so associng the db map directly corrupts it.
 
 ## Verification
 
