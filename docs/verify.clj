@@ -636,6 +636,18 @@
          (map :position (rc/children db :vk-pet/by-owner-id+position 1)))
        [0 1])
 
+;; ---- uniqueness across columns ------------------------------------------
+
+(s/create-table* :vu-layer [[:id :int :primary :key :auto] [:doc-id :int] [:position :int]]
+                 :unique [[:doc-id :position]])
+
+(check "tables: a repeated (doc-id, position) is rejected"
+       (let [db (-> (rc/create-db) (rc/table-constraints :vu-layer)
+                    (rc/insert :vu-layer {:doc-id 1 :position 0}))]
+         (try (rc/insert db :vu-layer {:doc-id 1 :position 0}) nil
+              (catch Exception e (:relatum/error (ex-data e)))))
+       :unique-key-violation)
+
 ;; ---- exit ---------------------------------------------------------------
 
 (if (pos? @failures)

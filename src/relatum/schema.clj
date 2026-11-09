@@ -69,18 +69,32 @@
 
 (defn- bump-gen! [] (swap! schema-gen inc))
 
+(def ^:private table-options
+  "What create-table accepts after the columns."
+  #{:unique :record})
+
 (defn build-table*
   "Validate a declaration into a table description, throwing on a bad one. The
-  checking is relatum.plan/build-table's; this is the throwing call site."
-  [name cols]
-  (value! (plan/build-table {:name name :columns cols})))
+  checking is relatum.plan/build-table's; this is the throwing call site.
+  `opts` may carry :unique [[col ...] ...]; an option relatum doesn't know is
+  rejected rather than silently dropped."
+  ([name cols] (build-table* name cols nil))
+  ([name cols opts]
+   (when-let [unknown (seq (remove table-options (keys opts)))]
+     (throw (ex-info (str "Unknown create-table option(s) " (pr-str (vec unknown)))
+                     {:relatum/error :unknown-table-option :table name
+                      :options (vec unknown) :known (vec (sort table-options))})))
+   (value! (plan/build-table {:name name :columns cols :unique (:unique opts)}))))
 
 (defn create-table*
   "Register a table schema at runtime. Validates the declaration and returns
   the table. Use this for schemas loaded from data; prefer the create-table
-  macro for tables known at compile time."
-  [name cols]
-  (let [t (build-table* name cols)]
+  macro for tables known at compile time.
+
+    (create-table* :layer [[:id :int :primary :key] [:doc-id :int] [:position :int]]
+                   :unique [[:doc-id :position]])"
+  [name cols & {:as opts}]
+  (let [t (build-table* name cols opts)]
     (swap! registry assoc name t)
     (bump-gen!)
     t))
@@ -248,12 +262,13 @@
   "The form create-table expands to: register the schema and, unless disabled,
   generate a record type named after the table in the caller's namespace."
   [table-name cols opts]
-  (let [t (build-table* table-name cols)]
+  (let [t (build-table* table-name cols opts)
+        unique (:unique opts)]
     (if (false? (:record opts))
-      `(do (create-table* ~table-name ~cols) nil)
+      `(do (create-table* ~table-name ~cols :unique ~unique) nil)
       (let [rsym (type-sym table-name)]
         `(do
-           (create-table* ~table-name ~cols)
+           (create-table* ~table-name ~cols :unique ~unique)
            (defrecord ~rsym ~(record-fields t))
            nil)))))
 
@@ -269,6 +284,10 @@
   The declaration is validated when this macro expands, so an unknown type,
   duplicate column, or contradictory attribute is a compile error rather than
   something you discover at runtime. Also defrecords a type named after the
-  table (Fruit) in the calling namespace. Pass :record false to skip it."
+  table (Fruit) in the calling namespace. Pass :record false to skip it.
+
+  :unique [[:doc-id :position] ...] declares combinations of columns that must
+  be unique as a tuple (SQL's table-level UNIQUE (doc_id, position)); a write
+  that repeats one is rejected with :unique-key-violation."
   [table-name cols & {:as opts}]
   (create-table-form table-name cols opts))
