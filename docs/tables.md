@@ -58,8 +58,11 @@ expansion time for the macro and via an exception for `create-table*`.
 - `:on column` — which column of the referenced table the key points at.
 - `:on-delete :cascade` — deleting a parent row deletes its children. No
   other value is accepted; an unknown one rejects with `:unknown-on-delete`.
-- `:auto` — marks the column as automatically supplied. relatum records the
-  flag in the column description and does not generate values itself.
+- `:auto` — on a single integer primary key, `rc/insert` fills the column
+  when the row leaves it out: one more than the largest key present (1 for an
+  empty table). `rc/next-id` answers which key that is, for when you need the
+  id before inserting. A supplied value is kept. On other columns the flag is
+  only recorded.
 
 Without `:nullable`, every column is required, so most declarations never say
 `:required` explicitly. Say `:nullable` for the ones you want optional. The

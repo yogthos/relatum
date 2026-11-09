@@ -590,6 +590,52 @@
          [(count ranks) (< 0.9 (reduce + ranks) 1.1)])
        [3 true])
 
+;; ---- keys, deletes, update args, errors, children ----------------------
+
+(s/create-table* :vk-person [[:id :int :primary :key :auto] [:name :text :unique]
+                             [:balance :real :default 0.0]])
+(s/create-table* :vk-pet [[:id :int :primary :key :auto]
+                          [:owner-id :int :references :vk-person :on-delete :cascade]
+                          [:position :int]])
+(s/create-index :vk-pet [:owner-id :position] :type :btree)
+
+(def vk (-> (rc/create-db)
+            (rc/insert :vk-person {:name "Ada"})
+            (rc/insert :vk-person {:name "Grace"})))
+
+(check "writing: :auto keys and next-id"
+       [(map :id (rc/rows vk :vk-person)) (rc/next-id vk :vk-person)]
+       [[1 2] 3])
+
+(check "writing: rc/row by primary key"
+       [(:name (rc/row vk :vk-person 2)) (rc/row vk :vk-person 9)]
+       ["Grace" nil])
+
+(check "writing: update with args"
+       (:balance (rc/row (rc/update vk :vk-person [= :id 1] assoc :balance 10.0) :vk-person 1))
+       10.0)
+
+(check "writing: delete with a where, cascading"
+       (let [db (-> vk (rc/insert :vk-pet {:owner-id 1 :position 0})
+                    (rc/delete :vk-person [= :id 1]))]
+         [(map :id (rc/rows db :vk-person)) (rc/rows db :vk-pet)])
+       [[2] []])
+
+(check "writing: engine rejections carry :relatum/error"
+       (try (rc/insert vk :vk-person {:name "Ada"}) nil
+            (catch Exception e (:relatum/error (ex-data e))))
+       :unique-key-violation)
+
+(check "queries: rc/q sorts"
+       (map :name (rc/q vk [[:from :vk-person]] {:sort [:name]}))
+       ["Ada" "Grace"])
+
+(check "queries: children in position order"
+       (let [db (-> vk (rc/insert :vk-pet {:owner-id 1 :position 1})
+                    (rc/insert :vk-pet {:owner-id 1 :position 0}))]
+         (map :position (rc/children db :vk-pet/by-owner-id+position 1)))
+       [0 1])
+
 ;; ---- exit ---------------------------------------------------------------
 
 (if (pos? @failures)

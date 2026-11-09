@@ -60,9 +60,9 @@ Pure functions in this codebase return `{:ok true :value ...}` or
 `{:ok false :error keyword :message string, ...}` instead of throwing. The
 edge namespaces decide what a rejection means: `relatum.schema/rejected`
 turns one into ex-info with `:relatum/error` in the ex-data. This is what
-lets writ prove the pure namespaces total, and it is why the same rejection
-can surface with either `:relatum/error` or `:relatum.engine/error`
-depending on which layer threw.
+lets writ prove the pure namespaces total. The engine raises its own
+`:relatum.engine/error`; `relatum.core` adds `:relatum/error` to those on
+the way out, so its callers read one key.
 
 ## Testing and specs
 

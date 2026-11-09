@@ -5,6 +5,7 @@
   The engine stores plain maps, so validation and coercion have to happen here
   on the way in. A record built with create-table is a convenient way to carry
   a validated row, but it is not the storage representation."
+  (:refer-clojure :exclude [update])
   (:require [relatum.engine :as rel]
             [relatum.integrity :as integrity]
             [relatum.plan :as plan]
@@ -71,13 +72,16 @@
   [db name]
   (rel/mat db (plan/access-query (index-descriptor name))))
 
-(defn- coerce [table-name row]
-  (let [t (s/table table-name)]
-    (when-not t
+(defn- table!
+  "The registered table, or the :unknown-table rejection."
+  [table-name]
+  (or (s/table table-name)
       (throw (ex-info (str "Unknown table " table-name)
                       {:relatum/error :unknown-table :table table-name
-                       :known (vec (keys (s/tables)))})))
-    (s/coerce-row t row)))
+                       :known (vec (keys (s/tables)))}))))
+
+(defn- coerce [table-name row]
+  (s/coerce-row (table! table-name) row))
 
 (defn- fk-clauses
   "The {child-column parent-column} clause of every reference the table
@@ -144,35 +148,156 @@
                        :row (:row verdict)
                        :rows (:rows verdict)})))))
 
-(defn insert
-  "Insert a row, validated and coerced against its table schema first."
+(defn- relatum-data
+  "The first ex-data in `e`'s cause chain that carries a relatum error key."
+  [e]
+  (loop [x e]
+    (when x
+      (let [d (ex-data x)]
+        (if (or (contains? d :relatum/error) (contains? d :relatum.engine/error))
+          [x d]
+          (recur (ex-cause x)))))))
+
+(defn- normalize
+  "Engine rejections carry :relatum.engine/error; give them :relatum/error
+  too, so a caller reads every rejection from this layer the same way. The
+  engine's key and the original exception (as the cause) are kept."
+  [e]
+  (let [[x d] (relatum-data e)]
+    (if (and d (not (contains? d :relatum/error)))
+      (ex-info (ex-message x) (assoc d :relatum/error (:relatum.engine/error d)) e)
+      e)))
+
+(defmacro ^:private reporting
+  "Run body, rethrowing engine rejections with the :relatum/error key."
+  [& body]
+  `(try ~@body
+        (catch clojure.lang.ExceptionInfo e# (throw (normalize e#)))))
+
+;; ---- keys --------------------------------------------------------------------
+(defn- auto-column
+  "The table's :auto integer primary key column, or nil."
+  [t]
+  (let [pk (:pk t)
+        c (when (= 1 (count pk)) (first (filter #(= (first pk) (:name %)) (:columns t))))]
+    (when (and (:auto? c) (= :int (get-in c [:type :kind]))) (:name c))))
+
+(defn- pk-index
+  "The materialized unique index on the table's primary key, or nil."
+  [db t]
+  (let [idx-name (plan/index-name (:name t) (:pk t))]
+    (when-let [idx (get (s/access-indexes) idx-name)]
+      (let [q (plan/access-query idx)]
+        (when (rel/materialized? db q) (or (rel/index db q) {}))))))
+
+(defn next-id
+  "The key the next insert into `table-name` assigns when the row leaves its
+  :auto integer primary key out: one more than the largest present, 1 when
+  the table is empty. Throws {:relatum/error :no-auto-key} for a table
+  without a single :auto integer key.
+
+    (s/create-table :person [[:id :int :primary :key :auto] [:name :text]])
+    (next-id db :person)   ; => 1"
+  [db table-name]
+  (let [t (table! table-name)
+        col (or (auto-column t)
+                (throw (ex-info (str "Table " table-name " has no single :auto integer primary key")
+                                {:relatum/error :no-auto-key :table table-name})))
+        ks (if-let [idx (pk-index db t)]
+             (keys idx)
+             (map col (rel/q db [[:from table-name]])))]
+    (inc (reduce max 0 ks))))
+
+(defn- fill-auto
+  "Assign the next id to an :auto key the row leaves out."
   [db table-name row]
-  (let [row (coerce table-name row)]
-    (check-references db table-name row)
-    (rel/transact db [:insert table-name row])))
+  (let [col (auto-column (table! table-name))]
+    (if (and col (nil? (get row col)))
+      (assoc row col (next-id db table-name))
+      row)))
+
+(defn row
+  "The row with primary key `k` (a vector, in declared order, for a composite
+  key), or nil. A lookup in the key's index when the db keeps it.
+
+    (row db :person 1)
+    (row db :enrollment [student-id course-id])"
+  [db table-name k]
+  (let [t (table! table-name)
+        pk (:pk t)
+        kv (if (= 1 (count pk)) [k] (vec k))]
+    (when (empty? pk)
+      (throw (ex-info (str "Table " table-name " has no primary key")
+                      {:relatum/error :no-primary-key :table table-name})))
+    (if-let [idx (pk-index db t)]
+      (get-in idx kv)
+      (first (rel/q db [[:from table-name] (into [:where] (map (fn [c v] [= c v]) pk kv))])))))
+
+;; ---- writes ------------------------------------------------------------------
+(defn insert
+  "Insert a row, validated and coerced against its table schema first. An
+  :auto integer key left out of the row gets next-id."
+  [db table-name row]
+  (reporting
+    (let [row (coerce table-name (fill-auto db table-name row))]
+      (check-references db table-name row)
+      (rel/transact db [:insert table-name row]))))
 
 (defn insert-many [db table-name rows]
   (reduce (fn [d r] (insert d table-name r)) db rows))
 
 (defn update
-  "Update rows matching where with f, validating the new row shape. All rows
-  are replaced in one transaction, so an update whose final state is valid
-  succeeds even when no intermediate state would be (swapping two unique
-  values), and a rejected update leaves the database untouched."
-  [db table-name where f]
-  (let [rows (rel/q db [[:from table-name] [:where where]])]
-    ;; all deletes before all inserts: the unique constraint fires on the
-    ;; incremental flow, so an interleaved delete/insert of a swapped key
-    ;; would collide with a row the deletes have not reached yet
-    (apply rel/transact db
-           (concat (for [old rows] [:delete-exact table-name old])
-                   (for [old rows] [:insert table-name (coerce table-name (f old))])))))
+  "Update rows matching `where` to (apply f row args), validating each new
+  row against the schema, like clojure.core/update:
 
-(defn q [db query] (rel/q db query))
+    (update db :person [= :id 1] assoc :balance 10.0)
+
+  All rows are replaced in one transaction, so an update whose final state is
+  valid succeeds even when no intermediate state would be (swapping two
+  unique values), and a rejected update leaves the database untouched."
+  [db table-name where f & args]
+  (reporting
+    (let [rows (rel/q db [[:from table-name] [:where where]])]
+      ;; all deletes before all inserts: the unique constraint fires on the
+      ;; incremental flow, so an interleaved delete/insert of a swapped key
+      ;; would collide with a row the deletes have not reached yet
+      (apply rel/transact db
+             (concat (for [old rows] [:delete-exact table-name old])
+                     (for [old rows] [:insert table-name (coerce table-name (apply f old args))]))))))
+
+(defn q
+  "Run a query; `opts` as for relatum.engine/q, e.g {:sort [:name]}."
+  ([db query] (rel/q db query))
+  ([db query opts] (rel/q db query opts)))
+
 (defn what-if [db query & ops] (apply rel/what-if db query ops))
-(defn delete [db table-name] (rel/transact db [:delete table-name]))
+
+(defn delete
+  "Delete the rows of `table-name` matching every `where` expression, or
+  every row when none is given. Children declared :on-delete :cascade go
+  with their parents.
+
+    (delete db :person [= :id 1])
+    (delete db :person [< :balance 0] [= :status :closed])
+    (delete db :person)                  ; the whole table"
+  [db table-name & wheres]
+  (table! table-name)
+  (reporting (rel/transact db (into [:delete table-name] wheres))))
 
 (defn rows
   "Every row of a table, as maps."
   [db table-name]
   (vec (rel/q db [[:from table-name]])))
+
+(defn- leaves [x]
+  (if (map? x) (mapcat leaves (vals x)) (seq x)))
+
+(defn children
+  "The rows under `k` in a composite index, flattened in index order. Over a
+  :btree index on [parent position] that reads a parent's children in
+  position order:
+
+    (s/create-index :pet [:owner-id :position] :type :btree)
+    (children db :pet/by-owner-id+position 1)"
+  [db index-name k]
+  (vec (leaves (get (index db index-name) k))))

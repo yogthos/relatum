@@ -91,7 +91,8 @@ key), `:required`/`:not-null`, `:nullable`, `:unique`, `:default v`,
 `:on-delete :cascade`).
 
 Without `:nullable`, every column is required. `:default` fills an absent
-column. `:auto` records intent but generates nothing — supply ids yourself.
+column. `:auto` on a single integer primary key fills it on insert when the row
+leaves it out (max + 1); `rc/next-id` tells you that id up front.
 `create-table` is a macro; `create-table*` takes the same data at runtime.
 
 ```clojure
@@ -112,15 +113,18 @@ arrivals with `(rc/table-constraints db :late-table)`.
 ## Writing
 
 `rc/insert` / `rc/insert-many` validate and coerce (`:real` stores doubles)
-against the schema, then transact. `rc/update db :table where-expr f` replaces
-matching rows with `(f row)` revalidated atomically. `rc/delete db :table`
-clears the table; for predicate deletes use the engine:
-`(rel/transact db [:delete :table [< :age 42]])`.
+against the schema, then transact. `rc/update db :table where-expr f & args`
+replaces matching rows with `(apply f row args)` revalidated atomically, like
+`clojure.core/update`: `(rc/update db :person [= :id 1] assoc :balance 0.0)`.
+`rc/delete db :table where-expr...` deletes the matching rows (cascading);
+with no expression it clears the table. `rc/row db :table k` reads one row
+by primary key (a vector for a composite key).
 
 A rejected write throws ex-info with `:relatum/error` and friends — read it,
 don't string-match the message. Common keys: `:unknown-table`,
 `:too-long`, `:unknown-column`, `:foreign-key-violation`,
-`:unique-key-violation` (engine-level), `:check-violation` (engine-level).
+`:unique-key-violation`, `:check-violation` (the last two also carry the
+engine's `:relatum.engine/error`).
 
 ## Reading
 
@@ -135,7 +139,9 @@ first: `[> :balance 50]`; ranges are `[:and [>= :a 1] [<= :a 9]]`),
 `[:select ...]`, `[:join query {left-col right-col}]`, `[:left-join ...]`,
 `[:agg [group-cols] [binding agg-expr]]`, `[:extend ...]`, `[:without ...]`,
 `[:union q]`, `[:intersection q]`, `[:difference q]`. Sort with
-`(rc/q db query {:sort [:name]})`. Rows are unordered — compare as sets.
+`(rc/q db query {:sort [:name]})`. Children in position order: a `:btree`
+index on `[:parent-id :position]` and
+`(rc/children db :child/by-parent-id+position parent-id)`. Rows are unordered — compare as sets.
 Whole-table reads: `rc/rows`. Aggregates: `rel/sum`, `rel/avg`,
 `rel/count-distinct`, `rel/max-by`, `rel/top-by`.
 

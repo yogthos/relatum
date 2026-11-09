@@ -191,12 +191,14 @@ planning on cold reads, index maintenance on writes.
 ## Updating and deleting
 
 ```clojure
-(def db (rc/update db :person [= :id 3] (fn [row] (assoc row :balance 25.0))))
+(def db (rc/update db :person [= :id 3] assoc :balance 25.0))
+(rc/row db :person 3)              ; the row by primary key
+(def db (rc/delete db :person [= :id 3]))
 (def db (rc/delete db :person))   ; every row of the table
 ```
 
-`rc/update` takes a function of the old row and validates what it returns
-against the schema. The database is a value: every write returns a new one,
+`rc/update` takes a function of the old row (and any extra arguments for it)
+and validates what it returns against the schema. The database is a value: every write returns a new one,
 and a rejected write throws, leaving the old database untouched.
 
 ## Immutability
