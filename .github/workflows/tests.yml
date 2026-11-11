@@ -36,18 +36,6 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      # deps.edn pulls writ in as {:local/root "../jlt-commons/writ"}, a
-      # sibling of the repo, so check it out inside the workspace and link it
-      # to the sibling path the classpath expects.
-      - uses: actions/checkout@v4
-        with:
-          repository: jlt-commons/writ
-          path: jlt-commons/writ
-      - name: Link writ to the path deps.edn expects
-        run: |
-          set -euo pipefail
-          ln -s "${GITHUB_WORKSPACE}/jlt-commons" \
-                "$(dirname "${GITHUB_WORKSPACE}")/jlt-commons"
       - name: Install jolt
         run: |
           set -euo pipefail
