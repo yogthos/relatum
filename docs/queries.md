@@ -180,7 +180,23 @@ ask about.
 For a declared table, the primary key, unique columns, and foreign keys each
 maintain a nested map incrementally under a name derived from the
 declaration — `:customer/by-id`, `:order/by-cust-id`, or
-`:order/by-cust-id+status` for a composite you declare yourself:
+`:order/by-cust-id+status` for a composite you declare yourself.
+
+These indexes are derived, with no declaration needed, and `create-db`
+installs them:
+
+| from                     | name                 | type      |
+|--------------------------|----------------------|-----------|
+| the primary key          | `:t/by-<pk cols>`    | `:unique` |
+| each `:unique` column    | `:t/by-<col>`        | `:unique` |
+| each `:references` column | `:t/by-<col>`       | `:hash`   |
+
+`s/access-indexes` lists them alongside the declared ones. Declaring one
+again with the same shape — `(s/create-index :order [:cust-id])` over a
+foreign key — is a no-op that returns the derived descriptor; a different
+shape under the same name (a `:btree` there, or any index over the primary
+key) is rejected with `:index-name-conflict`, and the ex-data's `:existing`
+names the index that is already there.
 
 ```clojure
 (require '[relatum.core :as rc])
@@ -224,6 +240,21 @@ install one later and thread the db it returns:
 ```clojure
 (def db' (rc/ensure-index db :order/by-status))
 ```
+
+### Rows by column
+
+`rc/lookup` answers "the rows of this table whose column is this value" with
+whatever index the db keeps for it — any access index led by that column,
+derived or declared — and falls back to the equivalent `rc/q` when there is
+none. It returns a set of rows, like a `:hash` index does:
+
+```clojure
+(rc/lookup db :order :cust-id 42)   ;; #{order ...}, from :order/by-cust-id
+```
+
+Through an index it costs a map lookup and plans nothing, so it is the form
+to use in a loop; a cold `[:where [= :cust-id 42]]` query is planned anew
+on every call.
 
 ### Children in order
 

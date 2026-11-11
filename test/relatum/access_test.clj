@@ -79,9 +79,38 @@
   (is (= :bad-index (:error (plan/build-index (s/table :aorder) [] {})))))
 
 (deftest a-declared-index-whose-name-collides-with-a-derived-one-is-rejected
-  ;; [:cust-id] is the fk's derived name, [:id] the pk's
-  (is (= :index-name-conflict (:error (plan/build-index (s/table :aorder) [:cust-id] {}))))
-  (is (= :index-name-conflict (:error (plan/build-index (s/table :aorder) [:id] {})))))
+  ;; [:id] is the pk's derived name (a :unique index); [:cust-id] the fk's,
+  ;; a :hash index, so a :btree over it is a different index under that name
+  (let [v (plan/build-index (s/table :aorder) [:id] {})]
+    (is (= :index-name-conflict (:error v)))
+    (is (= {:name :aorder/by-id :table :aorder :cols [:id] :type :unique :origin :pk}
+           (:existing v)))
+    (is (re-find #"primary key" (:message v)))
+    (is (re-find #":aorder/by-id" (:message v))))
+  (let [v (plan/build-index (s/table :aorder) [:cust-id] {:type :btree})]
+    (is (= :index-name-conflict (:error v)))
+    (is (= :fk (:origin (:existing v))))
+    (is (re-find #"foreign key" (:message v)))))
+
+(deftest declaring-exactly-a-derived-index-is-a-no-op
+  ;; a :hash index over a foreign key column is what the fk already derives
+  (let [v (plan/build-index (s/table :aorder) [:cust-id] {})]
+    (is (plan/ok? v))
+    (is (= {:name :aorder/by-cust-id :table :aorder :cols [:cust-id] :type :hash :origin :fk}
+           (:value v))))
+  (let [before (s/access-indexes)
+        idx (s/create-index :aorder [:cust-id] :type :hash)]
+    (is (= :fk (:origin idx)))
+    (is (= before (s/access-indexes)) "nothing new is registered")
+    (is (nil? (s/forget-index :aorder/by-cust-id)) "it was never a declaration")
+    (is (contains? (s/access-indexes) :aorder/by-cust-id) "and the derived one is still served"))
+  (testing "the schema edge reports a real conflict with the existing index"
+    (try
+      (s/create-index :aorder [:id])
+      (is false "expected the conflicting declaration to be rejected")
+      (catch Throwable t
+        (is (= :index-name-conflict (:relatum/error (ex-data t))))
+        (is (= :pk (:origin (:existing (ex-data t)))))))))
 
 (deftest an-index-with-an-unsupported-type-is-rejected
   (is (= :unknown-index-type (:error (plan/build-index (s/table :aorder) [:status] {:type :gin}))))

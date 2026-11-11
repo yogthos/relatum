@@ -111,7 +111,8 @@ The registry is global per jolt process. If two namespaces declare `:person`
 differently, the last declaration wins, which is why the test suite uses
 distinct names everywhere. A sibling registry holds declared access indexes
 (`s/create-index`, `s/forget-index`, listed by `s/access-indexes`); primary
-keys, unique columns, and foreign keys derive theirs without a declaration.
+keys, unique columns, and foreign keys derive theirs without a declaration
+(redeclaring one with the same shape is a no-op).
 `create-db` installs the constraints and every access index for all
 registered tables, so declare tables and indexes first, or install late
 arrivals with `rc/table-constraints` / `rc/ensure-index`. `s/forget` drops a

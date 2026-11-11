@@ -322,6 +322,26 @@
                       :shipped))])
        [1 2])
 
+(check "redeclaring a derived fk index is a no-op"
+       (let [before (s/access-indexes)
+             idx (s/create-index :vorder [:cust-id])]
+         [(:origin idx) (= before (s/access-indexes))])
+       [:fk true])
+
+(throws "a different index under a derived name names the existing one"
+        #"already exists.*primary key"
+        (s/create-index :vorder [:id]))
+
+(check "lookup reads rows by column through its index"
+       (let [db (-> (rc/create-db)
+                    (rc/insert :vcust {:id 1 :name "ada"})
+                    (rc/insert-many :vorder [{:id 10 :cust-id 1 :status :shipped :created 500}
+                                             {:id 11 :cust-id 1 :status :open :created 1000}]))]
+         [(set (map :id (rc/lookup db :vorder :cust-id 1)))
+          (rc/lookup db :vorder :cust-id 42)
+          (set (map :id (rc/lookup db :vorder :created 1000)))])
+       [#{10 11} #{} #{11}])
+
 (throws "reading an unkept index is rejected, not rebuilt"
         #"not materialized"
         ;; a hand-built db keeps no access indexes; the read must not
@@ -363,6 +383,31 @@
                                :vperson2)))
        '[{:id 1, :name "Ada", :balance 10.0}
          {:id 2, :name "Grace", :balance 500.0}])
+
+(check "insert-many is one transaction numbering :auto keys in order"
+       (do (s/create-table* :vauto2 [[:id :int :primary :key :auto] [:name :text]])
+           (let [db (rc/insert-many (rc/create-db) :vauto2 [{:name "a"} {:id 5 :name "b"} {:name "c"}])]
+             (sort (map (juxt :id :name) (rc/rows db :vauto2)))))
+       '([1 "a"] [5 "b"] [6 "c"]))
+
+(check "insert-tables loads children before parents in one transaction"
+       (do (s/create-table* :vperson3 [[:id :int :primary :key] [:name :text]])
+           (s/create-table* :vorder3 [[:id :int :primary :key]
+                                      [:cust-id :int :references :vperson3]])
+           (let [db (rc/insert-tables (rc/create-db)
+                                      {:vorder3 [{:id 70 :cust-id 7}]
+                                       :vperson3 [{:id 7 :name "Edsger"}]})]
+             [(rc/rows db :vperson3) (rc/rows db :vorder3)]))
+       '[[{:id 7, :name "Edsger"}] [{:id 70, :cust-id 7}]])
+
+(throws "insert-tables rejects a dangling reference"
+        #"Foreign key violation"
+        (rc/insert-tables (rc/create-db) {:vorder3 [{:id 70 :cust-id 8}]
+                                          :vperson3 [{:id 7 :name "Edsger"}]}))
+
+(s/forget :vorder3)
+(s/forget :vperson3)
+(s/forget :vauto2)
 
 (check "insert-or-replace with materialized unique"
        (set (rel/q (rel/transact (rel/mat {} [[:from :uor] [:unique :id]])

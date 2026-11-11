@@ -140,7 +140,16 @@
   opts may carry :type (:hash, the default, or :btree for ordered access).
   Registers it under its derived name (:order/by-customer+status) and returns
   the descriptor. Throws the schema layer's ex-info on a rejected declaration
-  and on a duplicate registration."
+  and on a duplicate registration.
+
+  Some indexes exist without being declared, derived from the table itself
+  and installed by create-db: a :unique index over the primary key
+  (:t/by-id), a :unique index per :unique column, and a :hash index per
+  foreign key column (:order/by-customer). Declaring one of those with the
+  same shape (a :hash over a foreign key column) is a no-op that returns
+  the derived descriptor; another shape under that name throws
+  {:relatum/error :index-name-conflict} naming the existing index, which
+  ex-data carries under :existing."
   [table-name cols & {:as opts}]
   (let [t (table table-name)]
     (when-not t
@@ -154,8 +163,11 @@
                           :message (str "Index " (:name idx) " is already declared")
                           :table table-name :index (:name idx)
                           :existing existing})))
-      (swap! index-registry assoc (:name idx) idx)
-      (bump-gen!)
+      ;; a derived index lives in the table's own declaration; registering a
+      ;; copy would only shadow it with one that could drift
+      (when (= :declared (:origin idx))
+        (swap! index-registry assoc (:name idx) idx)
+        (bump-gen!))
       idx)))
 
 (defn forget-index

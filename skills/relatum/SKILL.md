@@ -135,7 +135,10 @@ arrivals with `(rc/table-constraints db :late-table)`.
 ## Writing
 
 `rc/insert` / `rc/insert-many` validate and coerce (`:real` stores doubles)
-against the schema, then transact. `rc/update db :table where-expr f & args`
+against the schema, then transact — `insert-many` as one transaction.
+Bulk-load several tables with `(rc/insert-tables db {:parent rows :child rows})`:
+validated, defaulted, `:auto` keys filled, FKs checked, one transaction, any
+table order. `rc/update db :table where-expr f & args`
 replaces matching rows with `(apply f row args)` revalidated atomically, like
 `clojure.core/update`: `(rc/update db :person [= :id 1] assoc :balance 0.0)`.
 `rc/delete db :table where-expr...` deletes the matching rows (cascading);
@@ -180,7 +183,10 @@ Names derive from the declaration — `:table/by-col` (pk, `:unique`, `:referenc
 `:table/by-a+b` for a composite declared with `(s/create-index :order [:cust-id :status])`.
 `rc/index` is a strict read: an index the db doesn't keep throws
 `:index-not-materialized` (declare before `create-db`, or `rc/ensure-index`),
-an unknown name throws `:unknown-index`. Range reads want
+an unknown name throws `:unknown-index`. FK columns already have a `:hash`
+index (`:order/by-cust-id`) — redeclaring it is a no-op. For "rows where col
+= v" in a loop use `(rc/lookup db :order :cust-id 42)` (a set of rows, read
+from any index led by that column, else a query). Range reads want
 `(s/create-index :order [:created] :type :btree)` and `subseq`.
 
 ## Views, branching, change tracking
@@ -222,8 +228,8 @@ over a snapshot; rebuild after writes.
 `rc/*` is the validating surface; `relatum.engine` (`rel/q`, `rel/transact`,
 `rel/mat`) is the raw ported relic engine. Predicate updates and deletes have
 validating forms (`rc/update`, `rc/delete` with a where); reach for
-`rel/transact` for bulk loads where per-row validation isn't needed, or for
-the `:insert-or-*` commands. Its rejections carry only
+`rel/transact` for the `:insert-or-*` commands (bulk loads want
+`rc/insert-tables`, which validates at nearly the same cost). Its rejections carry only
 `:relatum.engine/error`. All modifications must go through these — state
 lives in metadata, so associng the db map directly corrupts it.
 

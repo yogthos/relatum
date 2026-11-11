@@ -588,7 +588,10 @@
 
   opts may carry :type (:hash, the default, or :btree for ordered access).
   Rejects an empty or non-vector column list, unknown or repeated columns,
-  an unsupported type, and a name a derived index already owns."
+  an unsupported type, and a name a derived index already owns with a
+  different shape. Declaring exactly a derived index (same columns, same
+  type - a :hash over a foreign key column) succeeds with the derived
+  descriptor, whose :origin says it is not a declaration."
   [table cols opts]
   (let [declared (:type opts :hash)
         names (set (column-names table))]
@@ -613,13 +616,28 @@
                 {:table (:name table) :columns dupes})
           :else
           (let [i (index (:name table) cols declared :declared)
-                derived (into #{} (map :name) (derived-indexes table))]
-            (if (contains? derived (:name i))
+                existing (some #(when (= (:name i) (:name %)) %) (derived-indexes table))]
+            (cond
+              (nil? existing) (succeed i)
+              ;; asking for exactly the index the declaration already
+              ;; derives (a :hash over a foreign key column) is a no-op: the
+              ;; verdict carries the derived descriptor, origin and all
+              (and (= cols (:cols existing)) (= declared (:type existing)))
+              (succeed existing)
+              :else
               (fail :index-name-conflict
-                    (str "Index " (:name i) " is already derived from " (:name table)
-                         "'s own declaration")
-                    {:table (:name table) :index (:name i) :cols cols})
-              (succeed i))))))))
+                    (str "Index " (:name i) " already exists: " (:name table) "'s "
+                         (case (:origin existing)
+                           :pk "primary key"
+                           :unique "unique column"
+                           :fk "foreign key"
+                           (name (:origin existing)))
+                         " derives it as a " (:type existing) " index over "
+                         (pr-str (:cols existing))
+                         ", maintained automatically; read it with (relatum.core/index db "
+                         (:name i) ")")
+                    {:table (:name table) :index (:name i) :cols cols
+                     :existing existing}))))))))
 
 (defn access-query
   "The relvar query whose materialized value is an index descriptor's nested

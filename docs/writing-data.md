@@ -49,6 +49,25 @@ Several rows at once:
 (def db (rc/insert-many db :person [{:id 3 :name "Linus"}]))
 ```
 
+`insert-many` validates every row like `insert`, then writes them all in one
+transaction: a rejected row rejects the batch, and rows may reference each
+other in either order. `:auto` keys left out are numbered as successive
+inserts would number them, from one counter rather than a rescan per row.
+
+To load several tables at once, `rc/insert-tables` takes a map of table to
+rows (or a sequence of `[table rows]` pairs). It validates and defaults every
+row, checks every foreign key against the database plus the rows being
+loaded, and writes the lot as a single transaction, parents first whatever
+order the tables are given in:
+
+```clojure
+(def db (rc/insert-tables db {:order  [{:id 70 :cust-id 7}]
+                              :person [{:id 7 :name "Edsger"}]}))
+```
+
+This is the bulk-load path: validation costs a pass over the rows, not a
+transaction per row, so there is little left to gain by going around it.
+
 ## Updating
 
 `rc/update` takes a where-expression and a function of the old row, plus any
@@ -138,8 +157,9 @@ A map of table to rows is a terser multi-table insert:
 ```
 
 Rows inserted this way skip schema validation, since the engine does not know
-about the registry. Validate at the boundary if that matters to you, or use
-`rc/insert` for the rows that need it.
+about the registry: no defaults, no `:auto` keys, no type checks.
+`rc/insert-tables` takes the same map and does all of that in one
+transaction too.
 
 A note on duplicates, since it surprises people: a relation is a set of rows,
 so inserting a row that is already there, byte for byte, does nothing. Two

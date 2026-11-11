@@ -176,14 +176,19 @@ support:
 
 - Don't put a cold query in a hot loop. A query you never materialized is
   planned again on every call, roughly 9–90× the plain equivalent at this
-  size. Fine for one-offs and exploration.
+  size. Fine for one-offs and exploration. For "rows where this column is
+  that value", `(rc/lookup db :order :cust-id 42)` reads the column's
+  index (foreign keys, keys and unique columns all have one) without
+  planning anything.
 - Give point lookups an index. Through a materialized `[:unique ...]`, a
   lookup by id is about twice as fast as a linear scan of the table — but a
   plain map lookup is still far cheaper, so when you need that last mile,
   keep a plain map next to the database.
 - `rc/insert` validates the row against the schema, roughly six times the
-  cost of a bare engine insert. For bulk loads of data you already trust,
-  `rel/transact` with a map of table to rows is cheaper.
+  cost of a bare engine insert. For bulk loads, `rc/insert-many` and
+  `rc/insert-tables` (a map of table to rows) validate every row but write
+  them in one transaction, within a small factor of a bare
+  `rel/transact` with the same map — `bench/bulk.clj` measures both.
 
 None of this needed engine tuning; the costs sit where you'd expect them —
 planning on cold reads, index maintenance on writes.

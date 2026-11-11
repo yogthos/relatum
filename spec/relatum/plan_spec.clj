@@ -556,6 +556,19 @@
                                             [:a :int]]}))]
       (= :index-name-conflict (:error (build-index t [:id] {}))))))
 
+(law declaring-exactly-a-derived-index-returns-the-derived-one
+  (forall [k Keyword]
+    (let [t (:value (build-table {:name k
+                                  :columns [[:id :int :primary :key]
+                                            [:p :int :references :elsewhere]]}))
+          same (build-index t [:p] {})
+          other (build-index t [:p] {:type :btree})]
+      (and (ok? same)
+           (= {:name (index-name k [:p]) :table k :cols [:p] :type :hash :origin :fk}
+              (:value same))
+           (= :index-name-conflict (:error other))
+           (= :fk (:origin (:existing other)))))))
+
 (law a-declared-index-type-must-be-known
   (forall [k Keyword]
     (let [t (:value (build-table {:name k :columns [[:a :int]]}))]
