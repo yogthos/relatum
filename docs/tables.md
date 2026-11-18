@@ -58,6 +58,9 @@ expansion time for the macro and via an exception for `create-table*`.
 - `:on column` — which column of the referenced table the key points at.
 - `:on-delete :cascade` — deleting a parent row deletes its children. No
   other value is accepted; an unknown one rejects with `:unknown-on-delete`.
+- `:as expr` — a computed column: its value is the expression run over the
+  rest of the row, filled in on every insert and update. See
+  [Computed columns](#computed-columns).
 - `:auto` — on a single integer primary key, `rc/insert` fills the column
   when the row leaves it out: one more than the largest key present (1 for an
   empty table). `rc/next-id` answers which key that is, for when you need the
@@ -69,7 +72,7 @@ Without `:nullable`, every column is required, so most declarations never say
 two together are contradictory and reject with `:required-and-nullable`.
 
 Attributes that take a value (`:default`, `:check`, `:references`, `:on`,
-`:on-delete`) must actually get one. A truncated tail like
+`:on-delete`, `:as`) must actually get one. A truncated tail like
 `[:pid :int :references]` rejects with `:missing-attribute-value` rather than
 silently dropping the reference.
 
@@ -96,6 +99,42 @@ transaction, so it succeeds whenever its end state is valid. A malformed
 
 The rule doesn't derive an access index; declare one over the same columns if
 you read through them, a `:btree` for order (see `rc/children`).
+
+## Computed columns
+
+A column declared `:as expr` holds a value derived from the rest of its row,
+using the same expressions as `:where` and `:check`:
+
+```clojure
+(s/create-table :line
+  [[:id    :int  :primary :key]
+   [:qty   :int]
+   [:price :real]
+   [:total :real :as [* :qty :price]]
+   [:big?  :bool :as [> :total 100]]])
+
+(-> (rc/create-db)
+    (rc/insert :line {:id 1 :qty 3 :price 50.0})
+    (rc/row :line 1))
+;; => {:id 1, :qty 3, :price 50.0, :total 150.0, :big? true}
+```
+
+The value is stored, not worked out on read, so a computed column takes
+`:unique`, `:check`, `:nullable` and indexes like any other: a derived
+lower-cased email declared `:unique` rejects a second address that differs
+only in case. `rc/update` recomputes it from the new row.
+
+- Computed columns are filled in declaration order. One may read plain
+  columns anywhere in the table and computed columns declared before it;
+  reading itself or a later computed column rejects with `:generated-order`,
+  an unknown column with `:unknown-column`.
+- A row that supplies a computed column, or an update that changes one,
+  rejects with `:generated-column`.
+- The value is checked against the column's type like a written one
+  (`:bad-type`, `:required` when it comes out nil on a column that isn't
+  `:nullable`). An expression that throws rejects with `:generated-failed`
+  naming the column.
+- `:as` does not combine with `:default` or `:auto` (`:generated-conflict`).
 
 ## The registry
 

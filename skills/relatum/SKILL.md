@@ -89,7 +89,9 @@ Attributes: `:primary :key` (required + unique, composable for a composite
 key), `:required`/`:not-null`, `:nullable`, `:unique`, `:default v`,
 `:check form` (engine expression like `[< :qty 100]`), `:references table`
 (plus `:on column` when the target isn't the parent's primary key, and
-`:on-delete :cascade`).
+`:on-delete :cascade`), `:as expr` (a computed column, derived from the row
+on every insert and update and stored, so it can be `:unique`/indexed; writing
+one yourself rejects with `:generated-column`).
 
 Without `:nullable`, every column is required. `:default` fills an absent
 column. `:auto` on a single integer primary key fills it on insert when the row
@@ -144,6 +146,13 @@ replaces matching rows with `(apply f row args)` revalidated atomically, like
 `rc/delete db :table where-expr...` deletes the matching rows (cascading);
 with no expression it clears the table. `rc/row db :table k` reads one row
 by primary key (a vector for a composite key).
+
+Text input (CSV, form fields): `s/read-row :table {"id" "1" ...}` reads each
+value by its column's type (blank → column default). `relatum.csv` wraps it:
+`(csv/insert db :table text)` loads CSV (header row, or `{:columns [...]}`) in
+one transaction, errors carry `:line`; `(csv/export db :table)` or
+`(csv/export db query {:columns [...] :sort [...]})` writes it back;
+`csv/parse` / `csv/write` are the bare RFC 4180 format.
 
 A rejected write throws ex-info with `:relatum/error` and friends — read it,
 don't string-match the message. Common keys: `:unknown-table`,

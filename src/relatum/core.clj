@@ -79,9 +79,6 @@
                       {:relatum/error :unknown-table :table table-name
                        :known (vec (keys (s/tables)))}))))
 
-(defn- coerce [table-name row]
-  (s/coerce-row (table! table-name) row))
-
 (defn- fk-clauses
   "The {child-column parent-column} clause of every reference the table
   declares, with the table each one points at. A reference that cannot be
@@ -445,7 +442,10 @@
       ;; would collide with a row the deletes have not reached yet
       (apply rel/transact db
              (concat (for [old rows] [:delete-exact table-name old])
-                     (for [old rows] [:insert table-name (coerce table-name (apply f old args))]))))))
+                     (for [old rows]
+                       (let [t (table! table-name)]
+                         [:insert table-name
+                          (s/coerce-row t (s/recompute-row t old (apply f old args)))])))))))
 
 (defn q
   "Run a query; `opts` as for relatum.engine/q, e.g {:sort [:name]}."

@@ -29,6 +29,9 @@
 (ann planned-table [Any -> (Opt Table)])
 (ann value-kind [Any -> (Opt String)])
 (ann validate-row [Any Any -> Any])
+(ann check-column [Any Any Any -> Any])
+(ann read-row [Any Any -> Any])
+(ann expr-columns [Any -> (List Keyword)])
 (ann type-pred [Any -> Any])
 (ann check-op [Any Any -> Any])
 (ann constraints [Any Any -> Any])
@@ -272,8 +275,8 @@
 (law known-attributes-lists-every-attribute-in-order
   (forall [_ Unit]
     (let [as (known-attributes)]
-      (and (= 14 (count as))
-           (= [:auto :check :default :key :not-null :null :nullable :on
+      (and (= 15 (count as))
+           (= [:as :auto :check :default :key :not-null :null :nullable :on
                :on-delete :primary :primary-key :references :required :unique]
               as)
            (= as (vec (sort as)))))))
@@ -583,3 +586,38 @@
   (forall [k Keyword]
     (= [[:from k] [:unique :id]]
        (access-query {:table k :cols [:id] :type :unique}))))
+
+;; --- computed columns ------------------------------------------------------
+
+(law a-keyword-expression-reads-its-column
+  (forall [k Keyword]
+    (= (if (= :% k) [] [k]) (expr-columns k))))
+
+(law a-call-reads-the-columns-of-its-arguments
+  (forall [a Keyword b Keyword]
+    (= (vec (distinct (remove #{:%} [a b]))) (expr-columns [+ a b]))))
+
+(law an-escaped-constant-reads-nothing
+  (forall [k Keyword]
+    (= [] (expr-columns [:_ k]))))
+
+(law a-column-computed-from-itself-is-rejected
+  (forall [k Keyword]
+    (or (= :% k)
+        (= :generated-order
+           (:error (build-table {:name :t :columns [[k :int :as [inc k]]]}))))))
+
+(law a-row-that-writes-a-computed-column-is-rejected
+  (forall [n Int]
+    (let [t (planned-table (build-table {:name :t :columns [[:a :int] [:b :int :as [inc :a]]]}))]
+      (= :generated-column (:error (validate-row t {:a 1 :b n}))))))
+
+(law a-computed-value-is-checked-like-a-written-one
+  (forall [s String]
+    (let [t (planned-table (build-table {:name :t :columns [[:a :int] [:b :int :as [inc :a]]]}))]
+      (= :bad-type (:error (check-column t :b s))))))
+
+(law read-row-reads-a-column-by-its-type
+  (forall [i Int]
+    (let [t (planned-table (build-table {:name :t :columns [[:a :int]]}))]
+      (= {:ok true :value {:a i}} (read-row t {"a" (str i)})))))

@@ -82,6 +82,33 @@ Two helpers answer the same question without the exception machinery:
 (s/varchar-conforms? 4 "abcde")              ;; => false
 ```
 
+## Reading values from text
+
+CSV cells and form fields arrive as strings. `s/read-row` reads a row of
+them by each column's type, and `relatum.type/read-value` reads one value:
+
+```clojure
+(s/read-row :person {"id" "1" "name" "Ada" "balance" "10.5"})
+;; => {:id 1, :name "Ada", :balance 10.5}
+```
+
+| kind | reads |
+|------|-------|
+| text, varchar | the string as given, spaces and all |
+| int | `"42"`, `" -7 "` |
+| real | `"1.5"`, `"2"` (as 2.0), `"1e3"` |
+| bool | `true`/`false`, `t`/`f`, `yes`/`no`, `1`/`0`, any case |
+| keyword | `"active"` or `":active"`; `"a/b"` is namespaced |
+| uuid | the canonical 36-character form |
+| date | `"2024-01-02"`; an out-of-range month or day is refused |
+| timestamp | ISO-8601 instants, `"2024-01-02T03:04:05Z"` |
+
+For every kind but text, surrounding whitespace is ignored and a blank string
+is a missing value: `read-row` leaves the column out, so its default applies.
+Text that doesn't read rejects with `:unreadable`, naming the column, the
+value and the expected type. Keys may be keywords or strings; computed
+columns are ignored, since they're derived on insert.
+
 ## The jolt note behind `:real`
 
 Only `:real` carries a type hint, and only because jolt coerces `^double`. On

@@ -2,7 +2,8 @@
 ;; Prints one line per check and FAILs loudly.
 (require '[relatum.schema :as s]
          '[relatum.core :as rc]
-         '[relatum.engine :as rel])
+         '[relatum.engine :as rel]
+         '[relatum.csv :as csv])
 
 (def failures (atom 0))
 
@@ -692,6 +693,48 @@
          (try (rc/insert db :vu-layer {:doc-id 1 :position 0}) nil
               (catch Exception e (:relatum/error (ex-data e)))))
        :unique-key-violation)
+
+;; ---- computed columns ---------------------------------------------------
+
+(s/create-table* :vc-line [[:id :int :primary :key] [:qty :int] [:price :real]
+                           [:total :real :as [* :qty :price]]
+                           [:big? :bool :as [> :total 100]]])
+
+(check "tables: a computed column is stored"
+       (-> (rc/create-db) (rc/table-constraints :vc-line)
+           (rc/insert :vc-line {:id 1 :qty 3 :price 50.0})
+           (rc/row :vc-line 1))
+       {:id 1 :qty 3 :price 50.0 :total 150.0 :big? true})
+
+(check "tables: writing a computed column is rejected"
+       (try (rc/insert (rc/table-constraints (rc/create-db) :vc-line) :vc-line
+                       {:id 1 :qty 1 :price 1.0 :total 9.0}) nil
+            (catch Exception e (:relatum/error (ex-data e))))
+       :generated-column)
+
+;; ---- types.md: reading text, csv.md --------------------------------------
+
+(s/create-table* :vcsv [[:id :int :primary :key] [:name :text]
+                        [:balance :real :default 0.0] [:active :bool :nullable]])
+
+(check "types: read-row"
+       (s/read-row :vcsv {"id" "1" "name" "Ada" "balance" "10.5"})
+       {:id 1 :name "Ada" :balance 10.5})
+
+(def vcsv-db (csv/insert (rc/table-constraints (rc/create-db) :vcsv) :vcsv
+                         "id,name,balance,active\n1,Ada,100,true\n2,Grace,,\n"))
+
+(check "csv: a blank cell takes the default"
+       (rc/row vcsv-db :vcsv 2)
+       {:id 2 :name "Grace" :balance 0.0 :active nil})
+
+(check "csv: export"
+       (csv/export vcsv-db :vcsv)
+       "id,name,balance,active\n1,Ada,100.0,true\n2,Grace,0.0,\n")
+
+(check "csv: parse and write"
+       [(csv/parse "a,\"b,c\",,\"\"") (csv/write [["a" "b,c" nil ""]])]
+       [[["a" "b,c" nil ""]] "a,\"b,c\",,\"\"\n"])
 
 ;; ---- exit ---------------------------------------------------------------
 
