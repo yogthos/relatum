@@ -38,7 +38,7 @@
 
 (def ^:private column-attrs
   #{:primary :primary-key :key :required :not-null :nullable :null :unique
-    :default :check :references :on-delete :on :auto})
+    :default :check :references :on-delete :on :auto :as})
 
 (defn known-attributes
   "The column attributes a declaration may carry, sorted so error messages list
@@ -49,7 +49,7 @@
 (defn read-attributes
   "Fold a column's attribute tail into an options map, as a verdict.
 
-  The value-taking attributes (:default :check :references :on-delete :on)
+  The value-taking attributes (:default :check :references :on-delete :on :as)
   consume the next form; the flags leave it to be read as the next attribute.
   A value-taking attribute whose value is absent or nil is rejected - the
   missing-value case would silently drop the attribute's meaning, and an
@@ -71,7 +71,7 @@
       (recur (rest pending) (assoc acc :unique? true))
       (= :auto (first pending))
       (recur (rest pending) (assoc acc :auto? true))
-      (and (#{:default :check :references :on-delete :on} (first pending))
+      (and (#{:default :check :references :on-delete :on :as} (first pending))
            (nil? (second pending)))
       (fail :missing-attribute-value
             (str "Attribute " (name (first pending)) " of " column
@@ -86,6 +86,8 @@
       (recur (nthrest pending 2) (assoc acc :on-delete (second pending)))
       (= :on (first pending))
       (recur (nthrest pending 2) (assoc acc :on (second pending)))
+      (= :as (first pending))
+      (recur (nthrest pending 2) (assoc acc :generated (second pending)))
       :else
       (fail :unknown-attribute
             (str "Unknown column attribute " (pr-str (first pending)) " on " column)
@@ -112,6 +114,12 @@
             (str "Column " nm " cannot be both required and nullable; a nullable column is not required")
             {:table table :column nm})
 
+      (and (some? (:generated o)) (or (some? (:default o)) (true? (:auto? o))))
+      (fail :generated-conflict
+            (str "Column " nm " is computed with :as, so it cannot also take "
+                 (if (some? (:default o)) ":default" ":auto"))
+            {:table table :column nm})
+
       (and (some? on-delete) (not (#{:cascade :delete} on-delete)))
       (fail :unknown-on-delete
             (str "Column " nm " has :on-delete " (pr-str on-delete)
@@ -130,6 +138,7 @@
         :auto? (true? (:auto? o))
         :default (:default o)
         :check (:check o)
+        :generated (:generated o)
         :references (:references o)
         :on-delete on-delete
         :on (:on o)
@@ -165,6 +174,67 @@
     :else (typed-column table col (first col) (second col))))
 
 ;; ---------------------------------------------------------------------------
+;; computed columns
+
+(defn- call-args
+  "The parts of a call [f & args] read as expressions. The head is a function,
+  not a column; an escaped constant [:_ v] reads nothing; [:? f & args] holds
+  its function one place further in."
+  [e]
+  (let [f (first e)
+        args (vec (rest e))]
+    (cond
+      (#{:_ :relatum.engine/esc} f) []
+      (= :relatum.engine/get f) (filterv keyword? (take 1 args))
+      (#{:? :! :relatum.engine/nil-safe :relatum.engine/unsafe} f) (vec (rest args))
+      :else args)))
+
+(defn- call? [e] (and (vector? e) (seq e)))
+
+(defn expr-columns
+  "The columns an expression reads, in first-seen order: every keyword in an
+  argument position, :% (the whole row) aside."
+  [expr]
+  (vec (distinct (remove #{:%} (filter keyword? (tree-seq call? call-args expr))))))
+
+(defn- generated-problem
+  "Why computed column c, declared after the columns in `before`, cannot be
+  filled in, as a failed verdict, or nil when it can."
+  [table known generated before c]
+  (let [nm (:name c)
+        reads (expr-columns (:generated c))
+        filled (into #{} (comp (map :name) (filter generated)) before)
+        unknown (into [] (remove known) reads)
+        ahead (into [] (filter #(and (generated %) (not (filled %)))) reads)]
+    (cond
+      (seq unknown)
+      (fail :unknown-column
+            (str "Column " nm " of " table " is computed from unknown column(s) "
+                 (pr-str unknown))
+            {:table table :column nm :columns unknown :known (vec (sort known))})
+      (seq ahead)
+      (fail :generated-order
+            (str "Column " nm " of " table " is computed from " (pr-str ahead)
+                 ", which are not computed until after it; a computed column"
+                 " may only read plain columns and computed columns declared before it")
+            {:table table :column nm :columns ahead})
+      :else nil)))
+
+(defn- check-generated
+  "Every computed column reads only columns the table has, and no computed
+  column that is filled in after it - itself included - so filling them in
+  declaration order always sees its inputs. A verdict carrying the columns."
+  [table columns]
+  (let [known (into #{} (map :name) columns)
+        generated (into #{} (keep #(when (some? (:generated %)) (:name %))) columns)]
+    (or (some identity
+              (map-indexed (fn [i c]
+                             (when (some? (:generated c))
+                               (generated-problem table known generated (take i columns) c)))
+                           columns))
+        (succeed columns))))
+
+;; ---------------------------------------------------------------------------
 ;; tables
 
 (defn- duplicate-names [columns]
@@ -179,6 +249,9 @@
    :uniques (mapv :name (filter :unique? columns))
    ;; combinations unique as a tuple: create-table's :unique option
    :unique-sets (vec unique-sets)
+   ;; computed columns in declaration order, the order they are filled in
+   :generated (into [] (keep (fn [c] (when (some? (:generated c)) [(:name c) (:generated c)])))
+                    columns)
    :checks (into [] (keep (fn [c] (when (some? (:check c)) [(:name c) (:check c)])))
                  columns)
    :fks (into [] (keep (fn [c] (when (:references c)
@@ -249,10 +322,12 @@
               (fail :duplicate-column
                     (str "Duplicate column(s) " (pr-str dupes) " in table " name)
                     {:table name :columns dupes})
-              (let [sets (check-unique-sets name (:unique declaration) columns)]
-                (if (ok? sets)
-                  (succeed (table-from name columns (:value sets)))
-                  sets)))))))))
+              (let [gen (check-generated name columns)
+                    sets (when (ok? gen) (check-unique-sets name (:unique declaration) columns))]
+                (cond
+                  (not (ok? gen)) gen
+                  (ok? sets) (succeed (table-from name columns (:value sets)))
+                  :else sets)))))))))
 
 (defn column
   "A table's column description, or nil."
@@ -312,11 +387,24 @@
                    :expected (:sql (:type c)) :value v
                    :actual-type (value-kind v)})))))))
 
+(defn check-column
+  "Judge one value against a table's column, as a verdict carrying the coerced
+  value. How a computed column's value is checked once the edge has worked it
+  out."
+  [table column-name v]
+  (if-let [c (column table column-name)]
+    (check-value table c v)
+    (fail :unknown-column
+          (str "Unknown column " (pr-str column-name) " for " (:name table))
+          {:table (:name table) :column column-name :known (column-names table)})))
+
 (defn validate-row
   "Validate and coerce a row against a table description, as a verdict.
 
   Returns only declared columns, with defaults filled in where a column is
-  absent, so the engine never sees a key the table does not have. The first
+  absent, so the engine never sees a key the table does not have. Computed
+  columns are left out: a row that supplies one is rejected, and filling them
+  in is the edge's job, since it means running their expressions. The first
   problem found decides the verdict."
   [table row]
   (let [known (into #{} (map :name (:columns table)))
@@ -329,14 +417,64 @@
       (reduce (fn [acc c]
                 (if-not (ok? acc)
                   acc
-                  (let [nm (:name c)
-                        v (if (contains? row nm) (get row nm) (:default c))
-                        checked (check-value table c v)]
-                    (if (ok? checked)
-                      (succeed (assoc (:value acc) nm (:value checked)))
-                      checked))))
+                  (let [nm (:name c)]
+                    (if (some? (:generated c))
+                      (if (some? (get row nm))
+                        (fail :generated-column
+                              (str "Column " nm " of " (:name table)
+                                   " is computed and cannot be written")
+                              {:table (:name table) :column nm :value (get row nm)})
+                        acc)
+                      (let [v (if (contains? row nm) (get row nm) (:default c))
+                            checked (check-value table c v)]
+                        (if (ok? checked)
+                          (succeed (assoc (:value acc) nm (:value checked)))
+                          checked))))))
               (succeed {})
               (:columns table)))))
+
+;; ---------------------------------------------------------------------------
+;; rows from text
+
+(defn- column-key
+  "A column name from a key that may be a keyword or text, as a CSV header or
+  form field gives it."
+  [k]
+  (if (keyword? k) k (keyword (str k))))
+
+(defn read-row
+  "Read a row of text values into the values its table's columns hold, as a
+  verdict. Keys may be keywords or strings. Each value is read by its column's
+  type (relatum.type/read-value); one that reads as nil is left out, so the
+  column's default applies when the row is validated. Computed columns are
+  dropped, since they are derived on the way in - a table exported with them
+  loads back. The result still has to pass validate-row."
+  [table row]
+  (reduce-kv
+   (fn [acc k v]
+     (if-not (ok? acc)
+       acc
+       (let [nm (column-key k)
+             c (column table nm)]
+         (cond
+           (nil? c)
+           (fail :unknown-column
+                 (str "Unknown column " (pr-str k) " for " (:name table))
+                 {:table (:name table) :column nm :known (column-names table)})
+           (some? (:generated c)) acc
+           :else
+           (let [r (type/read-value (:type c) v)]
+             (cond
+               (not (ok? r))
+               (fail :unreadable
+                     (str "Column " nm " of " (:name table) " expects "
+                          (:sql (:type c)) ", but " (pr-str v) " does not read as one")
+                     {:table (:name table) :column nm :value v
+                      :expected (:sql (:type c))})
+               (nil? (:value r)) acc
+               :else (succeed (assoc (:value acc) nm (:value r)))))))))
+   (succeed {})
+   row))
 
 ;; ---------------------------------------------------------------------------
 ;; engine constraints
@@ -498,6 +636,7 @@
                                               :unique? :default :check])
                             d (assoc d :type (:sql (:type c)))]
                         (cond-> d
+                          (some? (:generated c)) (assoc :generated (:generated c))
                           (:references c) (assoc :references (:references c))
                           (:on c) (assoc :references-column (:on c))
                           (:on-delete c) (assoc :on-delete (:on-delete c)))))
@@ -514,6 +653,7 @@
     (:auto? c) (conj :auto)
     (some? (:default c)) (into [:default (:default c)])
     (some? (:check c)) (into [:check (:check c)])
+    (some? (:generated c)) (into [:as (:generated c)])
     (:references c) (into [:references (:references c)])
     (:on c) (into [:on (:on c)])
     (:on-delete c) (into [:on-delete (:on-delete c)])))

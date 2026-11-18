@@ -10,6 +10,7 @@ a plain immutable map.
 - [Queries](queries.md) — the query language, expressions, aggregation,
   nested access
 - [Writing data](writing-data.md) — inserts, updates, deletes, transactions
+- [CSV](csv.md) — loading tables from CSV text and exporting them
 - [Constraints](constraints.md) — what a declaration enforces, foreign keys,
   cascade deletes, error shapes
 - [Architecture](architecture.md) — how the namespaces fit together, what came

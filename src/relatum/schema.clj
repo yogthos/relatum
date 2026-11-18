@@ -10,12 +10,14 @@
 
   A column is [name type & attributes] where attributes may be
   :primary :key, :required, :nullable, :unique, :default v, :check form,
-  :references table, and :on-delete :cascade.
+  :references table, :on-delete :cascade, and :as expr for a computed column
+  whose value the expression derives from the rest of the row.
 
   Only :real carries a type hint, and only because jolt coerces ^double.
   jolt treats ^long/^int as contracts that neither coerce nor reject, so
   integer columns are enforced by validation instead."
   (:require [clojure.string :as str]
+            [relatum.engine.expr :as expr]
             [relatum.plan :as plan]
             [relatum.type :as type]))
 
@@ -209,12 +211,65 @@
 ;; ---------------------------------------------------------------------------
 ;; row coercion / validation
 
+(def ^:private compiled-expr
+  "An expression's row function, compiled once per distinct expression."
+  (memoize expr/row-fn))
+
+(defn- computed-value
+  "Run a computed column's expression over the row built so far, reporting a
+  throw as {:relatum/error :generated-failed} naming the column."
+  [table nm g row]
+  (try
+    ((compiled-expr g) row)
+    (catch Exception e
+      (throw (ex-info (str "Column " nm " of " (:name table)
+                           " could not be computed: " (ex-message e))
+                      {:relatum/error :generated-failed :table (:name table)
+                       :column nm :row row}
+                      e)))))
+
 (defn coerce-row
-  "Validate and coerce a row against a table schema. Returns a new map
-  containing only declared columns. Throws ex-info with ex-data
-  {:relatum/error ...} on the first problem found."
+  "Validate and coerce a row against a table schema, then fill in its computed
+  columns in declaration order, each checked against its declared type like a
+  written value. Returns a new map containing only declared columns. Throws
+  ex-info with ex-data {:relatum/error ...} on the first problem found; a row
+  that supplies a computed column is rejected with :generated-column."
   [table row]
-  (value! (plan/validate-row table row)))
+  (reduce (fn [r [nm g]]
+            (assoc r nm (value! (plan/check-column table nm (computed-value table nm g r)))))
+          (value! (plan/validate-row table row))
+          (:generated table)))
+
+(defn recompute-row
+  "The row an update writes: `new` (what the update function returned from
+  `old`) with its computed columns dropped so coerce-row derives them afresh.
+  An update that changed a computed column itself is rejected with
+  :generated-column, as writing one on insert is."
+  [table old new]
+  (reduce (fn [r [nm _]]
+            (if (= (get old nm) (get new nm))
+              (dissoc r nm)
+              (throw (rejected {:ok false :error :generated-column
+                                :message (str "Column " nm " of " (:name table)
+                                              " is computed and cannot be written")
+                                :table (:name table) :column nm :value (get new nm)}))))
+          new
+          (:generated table)))
+
+(defn read-row
+  "Read a row of text values (keys as keywords or strings, as a CSV header or
+  form gives them) into typed values for `table-name`, ready to insert. A
+  blank value is left out so the column's default applies; computed columns
+  are ignored. Throws {:relatum/error :unreadable} naming the column when a
+  value does not read as its column's type.
+
+    (read-row :person {\"id\" \"1\" \"balance\" \"10.5\"})  ; => {:id 1 :balance 10.5}"
+  [table-name row]
+  (let [t (or (table table-name)
+              (throw (ex-info (str "Unknown table " table-name)
+                              {:relatum/error :unknown-table :table table-name
+                               :known (vec (keys @registry))})))]
+    (value! (plan/read-row t row))))
 
 ;; ---------------------------------------------------------------------------
 ;; engine constraints

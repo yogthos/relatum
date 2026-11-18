@@ -90,3 +90,50 @@
   the same way every time."
   []
   ["bool" "date" "int" "keyword" "real" "text" "timestamp" "uuid" "varchar"])
+
+;; ---------------------------------------------------------------------------
+;; reading values from text
+;; CSV cells, form fields and query strings arrive as strings. read-value is
+;; the one place a string becomes the value a declared type holds, so a column
+;; reads its text the same way wherever the text came from.
+
+(def ^:private bool-words
+  {"true" true "false" false "t" true "f" false
+   "yes" true "no" false "1" true "0" false})
+
+(defn- read-text
+  "The value text `x` spells for `kind`, or nil when it spells none. `x` is
+  already trimmed and not blank."
+  [kind x]
+  (case kind
+    :int (parse-long x)
+    :real (parse-double x)
+    :bool (get bool-words (clojure.string/lower-case x))
+    :keyword (keyword (if (clojure.string/starts-with? x ":") (subs x 1) x))
+    :uuid (parse-uuid x)
+    ;; a date must print back as the text it was read from, so an
+    ;; out-of-range month or day is refused rather than rolled over
+    :date (let [d (try (java.time.LocalDate/parse x) (catch Exception _ nil))]
+            (when (and d (= x (str d))) d))
+    :timestamp (try (java.time.Instant/parse x) (catch Exception _ nil))
+    nil))
+
+(defn read-value
+  "Read text as a value of a declared type, as a verdict: {:ok true :value v}
+  or {:ok false :error :unreadable :expected <sql type> :value s}. Never throws.
+
+  Text and varchar columns keep the string exactly as given, spaces and all;
+  their length is validate's concern, not this one's. For every other kind
+  surrounding whitespace is ignored and a blank string reads as nil, the
+  absence of a value. A value that is not a string is already read and passes
+  through, as does anything when there is no type."
+  [type s]
+  (let [kind (:kind type)]
+    (cond
+      (or (nil? type) (not (string? s)) (#{:text :varchar} kind)) {:ok true :value s}
+      (clojure.string/blank? s) {:ok true :value nil}
+      :else
+      (let [v (read-text kind (clojure.string/trim s))]
+        (if (nil? v)
+          {:ok false :error :unreadable :expected (:sql type) :value s}
+          {:ok true :value v})))))

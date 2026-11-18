@@ -2,7 +2,7 @@
   "Laws for the type vocabulary. These quantify over the values an agent may
   actually pass, so a regression in parse-type or in a type predicate shows up
   as a failed law rather than as a table that quietly accepts junk."
-  (:require [writ.spec :refer [spec ann law graph]]))
+  (:require [writ.spec :refer [spec ann law graph assume]]))
 
 (spec relatum.type)
 
@@ -12,6 +12,12 @@
 (ann varchar-length [String -> (Opt Nat)])
 (ann varchar-conforms? [Nat String -> Bool])
 (ann known-types [-> (List String)])
+(ann read-value [Any Any -> (Map Keyword Any)])
+
+;; the host parsers read-value leans on; each answers a value or throws, and
+;; read-value catches the throw
+(assume java.time.LocalDate/parse [String -> Any])
+(assume java.time.Instant/parse [String -> Any])
 
 ;; --- the vocabulary is the one the parser understands ---------------------
 (law every-known-type-parses-and-keeps-its-place
@@ -106,3 +112,24 @@
 
 (law a-rejected-value-says-why
   (forall [x Float] (contains? (validate (parse-type :int) x) :error)))
+
+;; --- reading text --------------------------------------------------------
+
+(law an-int-reads-back-from-its-text
+  (forall [i Int]
+    (= {:ok true :value i} (read-value (parse-type :int) (str i)))))
+
+(law text-reads-as-itself
+  (forall [s String]
+    (= {:ok true :value s} (read-value (parse-type :text) s))))
+
+(law reading-text-always-answers-a-verdict
+  (forall [s String]
+    (let [v (read-value (parse-type :real) s)]
+      (if (:ok v)
+        (or (nil? (:value v)) (number? (:value v)))
+        (= :unreadable (:error v))))))
+
+(law a-value-already-read-passes-through
+  (forall [i Int]
+    (= {:ok true :value i} (read-value (parse-type :real) i))))

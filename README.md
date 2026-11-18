@@ -206,6 +206,46 @@ planning on cold reads, index maintenance on writes.
 and validates what it returns against the schema. The database is a value: every write returns a new one,
 and a rejected write throws, leaving the old database untouched.
 
+## Computed columns
+
+A column declared `:as expr` is derived from the rest of its row on every
+insert and update, and stored, so it can be unique, checked and indexed:
+
+```clojure
+(s/create-table :line
+  [[:id    :int  :primary :key]
+   [:qty   :int]
+   [:price :real]
+   [:total :real :as [* :qty :price]]])
+
+(-> (rc/create-db)
+    (rc/insert :line {:id 1 :qty 3 :price 50.0})
+    (rc/row :line 1))
+;; => {:id 1, :qty 3, :price 50.0, :total 150.0}
+```
+
+Writing a computed column yourself rejects with `:generated-column`. See
+[docs/tables.md](docs/tables.md#computed-columns).
+
+## CSV
+
+`relatum.csv` loads a table from CSV text, reading each cell by its column's
+type, and exports a table or query back:
+
+```clojure
+(require '[relatum.csv :as csv])
+
+(def db (csv/insert (rc/create-db) :person
+                    "id,name,balance\n1,Ada,100\n2,Grace,\n"))
+
+(csv/export db :person)
+;; => "id,name,balance\n1,Ada,100.0\n2,Grace,0.0\n"
+```
+
+A blank cell takes the column's default, a bad cell rejects with the line it
+came from, and the whole file goes in as one transaction. Details in
+[docs/csv.md](docs/csv.md).
+
 ## Immutability
 
 The database is a persistent value built on Clojure's ordinary immutable
